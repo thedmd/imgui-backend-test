@@ -4,9 +4,8 @@
 #include "imgui_internal.h"
 
 #include "poly2d/Polyline2D.h"
-
+#include "polyline_new.h"
 #include "polyline_allegro.h"
-
 #include "clipper2/clipper.h"
 
 #include <span>
@@ -283,7 +282,7 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, int count, I
     temp_buffer.reserve_discard(count);
     ImVec2* temp_normals = temp_buffer.Data;
 
-#define IM_SEGMENT_NORMAL(i0, i1, n)                            \
+#define IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i0, i1, n)                            \
     do                                                          \
     {                                                           \
         float dx = data[i1].x - data[i0].x;                     \
@@ -301,17 +300,17 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, int count, I
 
     for (int i = 0; i < count - 1; ++i)
     {
-        IM_SEGMENT_NORMAL(i, i + 1, temp_normals[i]);
+        IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i, i + 1, temp_normals[i]);
     }
 
     if (is_closed)
     {
-        IM_SEGMENT_NORMAL(count - 1, 0, temp_normals[count - 1]);
+        IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(count - 1, 0, temp_normals[count - 1]);
     }
     else
         temp_normals[count - 1] = temp_normals[count - 2];
 
-#undef IM_SEGMENT_NORMAL
+#undef IM_POLYLINE_COMPUTE_SEGMENT_DETAILS
 
     const float half_thickness = thickness * 0.5f;
 
@@ -503,6 +502,19 @@ void ImDrawList_Polyline_Clipper2(ImDrawList* draw_list, const ImVec2* data, int
     const auto is_closed = (flags & PolylineFlags_Closed) && count > 2;
     const auto is_capped = !is_closed && (flags & PolylineFlags_SquareCaps);
 
+    //const auto [min_x_it, max_x_it] = std::minmax_element(data, data + count, [](const auto& a, const auto& b) { return a.x < b.x; });
+    //const auto [min_y_it, max_y_it] = std::minmax_element(data, data + count, [](const auto& a, const auto& b) { return a.y < b.y; });
+    //const auto min_x = min_x_it->x;
+    //const auto max_x = max_x_it->x;
+    //const auto min_y = min_y_it->y;
+    //const auto max_y = max_y_it->y;
+
+    //const auto size_x = std::ceil(max_x - min_x);
+    //const auto size_y = std::ceil(max_y - min_y);
+
+    //const auto range_x = powf(10, Clipper2Lib::CLIPPER2_MAX_DEC_PRECISION);
+    //const auto range_y = powf(10, Clipper2Lib::CLIPPER2_MAX_DEC_PRECISION);
+
     Clipper2Lib::PathD points;
     points.reserve(count);
     for (int i = 0; i < count; ++i)
@@ -532,7 +544,7 @@ void ImDrawList_Polyline_Clipper2(ImDrawList* draw_list, const ImVec2* data, int
     Clipper2Lib::PathsD paths;
     paths.emplace_back(std::move(points));
 
-    auto result = Clipper2Lib::InflatePaths(paths, static_cast<double>(thickness) * 0.5, joinType, endType, state.MiterLimit);
+    auto result = Clipper2Lib::InflatePaths(paths, static_cast<double>(thickness) * 0.5, joinType, endType, state.MiterLimit, 6);
 
     auto draw_flags = draw_list->Flags;
     draw_list->Flags &= ~(ImDrawListFlags_AntiAliasedFill);
@@ -627,7 +639,23 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
                 break;
 
             case Method::New:
-                ImDrawList_Polyline(draw_list, Points.data(), static_cast<int>(Points.size()), Color, this->Flags | (state.AllegroLineCap == ALLEGRO_LINE_CAP_SQUARE ? PolylineFlags_SquareCaps : PolylineFlags_None), Thickness);
+                switch (state.AllegroLineCap)
+                {
+                    case ALLEGRO_LINE_CAP_NONE: break;
+                    case ALLEGRO_LINE_CAP_SQUARE: flags |= ImGuiEx::ImDrawFlags_CapSquare; break;
+                    case ALLEGRO_LINE_CAP_ROUND:  flags |= ImGuiEx::ImDrawFlags_CapRound; break;
+                    case ALLEGRO_LINE_CAP_TRIANGLE: break;
+                    case ALLEGRO_LINE_CAP_CLOSED: break;
+                }
+
+                switch (state.AllegroLineJoin)
+                {
+                    case ALLEGRO_LINE_JOIN_BEVEL: flags |= ImGuiEx::ImDrawFlags_JoinBevel; break;
+                    case ALLEGRO_LINE_JOIN_ROUND: flags |= ImGuiEx::ImDrawFlags_JoinRound; break;
+                    case ALLEGRO_LINE_JOIN_MITER: flags |= ImGuiEx::ImDrawFlags_JoinMiter; break;
+                }
+
+                ImGuiEx::ImDrawList_Polyline(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags, Thickness, state.MiterLimit);
                 break;
 
             case Method::Polyline2D:
@@ -1213,7 +1241,8 @@ static void EditCanvas()
         }
         else if (is_dragging_point && current_point >= 0 && ImGui::IsItemHovered())
         {
-            polyline.Points[current_point] = ImClamp(polyline.DragStart + drag_delta, ImVec2(0, 0), state.Canvas.Rect().Max - state.Canvas.Rect().Min);
+            auto viewRect = state.Canvas.ViewRect();
+            polyline.Points[current_point] = ImClamp(polyline.DragStart + drag_delta, viewRect.Min, viewRect.Max);
             //polyline.Points[current_point] = ImFloor(polyline.Points[current_point]);
 
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
