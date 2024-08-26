@@ -171,24 +171,6 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int co
         // Actual join used does account for discontinuity
         const int join_type = disconnected ? ThickButt : preferred_join_type;
 
-#if 0
-        float xxx = sin_theta / (1.0f + cos_theta);
-
-        ImDrawList* draw_list_2 = ImGui::GetForegroundDrawList();
-        ImGuiTextBuffer debug_text;
-        debug_text.appendf("i: %d, a: %.2f, c: %.2f, m: %.2f (max: %.2f), s: %.2f, limit: %d, disc: %d, xxx: %.2f\n",
-            i,
-            ImAcos(ImClamp(cos_theta, -1.0f, 1.0f)) * 180 / IM_PI,
-            sin_theta,
-            ImSqrt(miter_distance_sqr), ImSqrt(miter_distance_limit_sqr),
-            ImSqrt(segment_length_sqr),
-            limit_miter ? 1 : 0,
-            disconnected ? 1 : 0,
-            xxx
-        );
-        draw_list_2->AddText(ImVec2(10, 10 + i * ImGui::GetTextLineHeight()), IM_COL32(255, 255, 255, 255), debug_text.begin());
-#endif
-
         int new_vtx_count = 0;
 
         // Joins try to emit as little vertices as possible.
