@@ -5,12 +5,12 @@
 
 namespace ImGuiEx {
 
-enum ImDrawFlagsExtra
+enum ImDrawFlagsExtra_
 {
-    ImDrawFlags_JoinBevel       = 1 << 9,
-    ImDrawFlags_JoinRound       = 2 << 9,
-    ImDrawFlags_JoinMiter       = 3 << 9,
-    ImDrawFlags_JoinMiterClip   = 4 << 9,
+    ImDrawFlags_JoinMiter       = 1 << 9,
+    ImDrawFlags_JoinMiterClip   = 2 << 9,
+    ImDrawFlags_JoinBevel       = 3 << 9,
+    ImDrawFlags_JoinRound       = 4 << 9,
     ImDrawFlags_JoinDefault_    = ImDrawFlags_JoinMiter,
     ImDrawFlags_JoinMask_       = 7 << 9,
 

@@ -450,19 +450,24 @@ void ImDrawList_Polyline2D(ImDrawList* draw_list, const ImVec2* data, int count,
     std::span<const ImVec2> points(data, count);
 
     auto jointStyle = crushedpixel::Polyline2D::JointStyle::MITER;
-    switch (state.AllegroLineJoin)
+    switch (state.LineCap)
     {
-        case ALLEGRO_LINE_JOIN_BEVEL:  jointStyle = crushedpixel::Polyline2D::JointStyle::BEVEL; break;
-        case ALLEGRO_LINE_JOIN_ROUND:  jointStyle = crushedpixel::Polyline2D::JointStyle::ROUND; break;
-        case ALLEGRO_LINE_JOIN_MITER:  jointStyle = crushedpixel::Polyline2D::JointStyle::MITER; break;
+        using enum ImGuiEx::ImDrawFlagsExtra_;
+
+        case ImDrawFlags_JoinMiter:     jointStyle = crushedpixel::Polyline2D::JointStyle::MITER; break;
+        case ImDrawFlags_JoinMiterClip: jointStyle = crushedpixel::Polyline2D::JointStyle::MITER; break;
+        case ImDrawFlags_JoinBevel:     jointStyle = crushedpixel::Polyline2D::JointStyle::BEVEL; break;
+        case ImDrawFlags_JoinRound:     jointStyle = crushedpixel::Polyline2D::JointStyle::ROUND; break;
     }
 
     auto endCapStyle = crushedpixel::Polyline2D::EndCapStyle::BUTT;
-    switch (state.AllegroLineCap)
+    switch (state.LineCap)
     {
-        case ALLEGRO_LINE_CAP_NONE:     endCapStyle = crushedpixel::Polyline2D::EndCapStyle::BUTT; break;
-        case ALLEGRO_LINE_CAP_SQUARE:   endCapStyle = crushedpixel::Polyline2D::EndCapStyle::SQUARE; break;
-        case ALLEGRO_LINE_CAP_ROUND:    endCapStyle = crushedpixel::Polyline2D::EndCapStyle::ROUND; break;
+        using enum ImGuiEx::ImDrawFlagsExtra_;
+
+        case ImDrawFlags_CapButt:   endCapStyle = crushedpixel::Polyline2D::EndCapStyle::BUTT;   break;
+        case ImDrawFlags_CapSquare: endCapStyle = crushedpixel::Polyline2D::EndCapStyle::SQUARE; break;
+        case ImDrawFlags_CapRound:  endCapStyle = crushedpixel::Polyline2D::EndCapStyle::ROUND;  break;
     }
 
     if (is_closed)
@@ -486,12 +491,33 @@ void ImDrawList_Polyline2D(ImDrawList* draw_list, const ImVec2* data, int count,
 
 void ImDrawList_Polyline_Allegro(ImDrawList* draw_list, const ImVec2* data, int count, ImU32 color, PolylineFlags flags, float thickness)
 {
+    using enum ImGuiEx::ImDrawFlagsExtra_;
+
     const auto is_closed = (flags & PolylineFlags_Closed) && count > 2;
     const auto is_capped = !is_closed && (flags & PolylineFlags_SquareCaps);
 
-    auto cap = is_closed ? ALLEGRO_LINE_CAP_CLOSED : (is_capped ? ALLEGRO_LINE_CAP_SQUARE : state.AllegroLineCap);
+    int line_cap = ALLEGRO_LINE_CAP_NONE;
+    switch (state.LineCap)
+    {
+        case ImDrawFlags_CapButt:   line_cap = ALLEGRO_LINE_CAP_NONE;   break;
+        case ImDrawFlags_CapSquare: line_cap = ALLEGRO_LINE_CAP_SQUARE; break;
+        case ImDrawFlags_CapRound:  line_cap = ALLEGRO_LINE_CAP_ROUND;  break;
+    }
+    if (is_closed)
+        line_cap = ALLEGRO_LINE_CAP_CLOSED;
+    else if (is_capped)
+        line_cap = ALLEGRO_LINE_CAP_SQUARE;
 
-    imgui_al_draw_polyline(draw_list, &data->x, sizeof(ImVec2), count, state.AllegroLineJoin, cap, color, thickness, state.MiterLimit);
+    int line_join = ALLEGRO_LINE_JOIN_MITER;
+    switch (state.LineJoin)
+    {
+        case ImDrawFlags_JoinMiter:     line_join = ALLEGRO_LINE_JOIN_MITER; break;
+        case ImDrawFlags_JoinMiterClip: line_join = ALLEGRO_LINE_JOIN_MITER; break;
+        case ImDrawFlags_JoinBevel:     line_join = ALLEGRO_LINE_JOIN_BEVEL; break;
+        case ImDrawFlags_JoinRound:     line_join = ALLEGRO_LINE_JOIN_ROUND; break;
+    }
+
+    imgui_al_draw_polyline(draw_list, &data->x, sizeof(ImVec2), count, line_join, line_cap, color, thickness, state.MiterLimit);
 }
 
 void ImDrawList_Polyline_Clipper2(ImDrawList* draw_list, const ImVec2* data, int count, ImU32 color, PolylineFlags flags, float thickness)
@@ -521,21 +547,25 @@ void ImDrawList_Polyline_Clipper2(ImDrawList* draw_list, const ImVec2* data, int
         points.emplace_back(data[i].x, data[i].y);
 
     auto joinType = Clipper2Lib::JoinType::Square;
-    switch (state.AllegroLineJoin)
+    switch (state.LineJoin)
     {
-        case ALLEGRO_LINE_JOIN_BEVEL:  joinType = Clipper2Lib::JoinType::Bevel; break;
-        case ALLEGRO_LINE_JOIN_ROUND:  joinType = Clipper2Lib::JoinType::Round; break;
-        case ALLEGRO_LINE_JOIN_MITER:  joinType = Clipper2Lib::JoinType::Miter; break;
+        using enum ImGuiEx::ImDrawFlagsExtra_;
+
+        case ImDrawFlags_JoinMiter:     joinType = Clipper2Lib::JoinType::Miter; break;
+        case ImDrawFlags_JoinMiterClip: joinType = Clipper2Lib::JoinType::Miter; break;
+        case ImDrawFlags_JoinBevel:     joinType = Clipper2Lib::JoinType::Bevel; break;
+        case ImDrawFlags_JoinRound:     joinType = Clipper2Lib::JoinType::Round; break;
     }
 
     auto endType = Clipper2Lib::EndType::Butt;
-    switch (state.AllegroLineCap)
+    switch (state.LineCap)
     {
-        case ALLEGRO_LINE_CAP_NONE:     endType = Clipper2Lib::EndType::Butt;   break;
-        case ALLEGRO_LINE_CAP_SQUARE:   endType = Clipper2Lib::EndType::Square; break;
-        case ALLEGRO_LINE_CAP_ROUND:    endType = Clipper2Lib::EndType::Round;  break;
-    }
+        using enum ImGuiEx::ImDrawFlagsExtra_;
 
+        case ImDrawFlags_CapButt:   endType = Clipper2Lib::EndType::Butt;   break;
+        case ImDrawFlags_CapSquare: endType = Clipper2Lib::EndType::Square; break;
+        case ImDrawFlags_CapRound:  endType = Clipper2Lib::EndType::Round;  break;
+    }
     if (is_closed)
         endType = Clipper2Lib::EndType::Joined;
     else if (is_capped)
@@ -639,23 +669,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
                 break;
 
             case Method::New:
-                switch (state.AllegroLineCap)
-                {
-                    case ALLEGRO_LINE_CAP_NONE: break;
-                    case ALLEGRO_LINE_CAP_SQUARE: flags |= ImGuiEx::ImDrawFlags_CapSquare; break;
-                    case ALLEGRO_LINE_CAP_ROUND:  flags |= ImGuiEx::ImDrawFlags_CapRound; break;
-                    case ALLEGRO_LINE_CAP_TRIANGLE: break;
-                    case ALLEGRO_LINE_CAP_CLOSED: break;
-                }
-
-                switch (state.AllegroLineJoin)
-                {
-                    case ALLEGRO_LINE_JOIN_BEVEL: flags |= ImGuiEx::ImDrawFlags_JoinBevel; break;
-                    case ALLEGRO_LINE_JOIN_ROUND: flags |= ImGuiEx::ImDrawFlags_JoinRound; break;
-                    case ALLEGRO_LINE_JOIN_MITER: flags |= ImGuiEx::ImDrawFlags_JoinMiter; break;
-                }
-
-                ImGuiEx::ImDrawList_Polyline(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags, Thickness, state.MiterLimit);
+                ImGuiEx::ImDrawList_Polyline(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags | state.LineJoin | state.LineCap, Thickness, state.MiterLimit);
                 break;
 
             case Method::Polyline2D:
@@ -755,11 +769,11 @@ State::State()
             }
             else if (sscanf_s(line, "Cap=%d", &flag) == 1)
             {
-                state->AllegroLineCap = flag;
+                state->LineCap = flag;
             }
             else if (sscanf_s(line, "Join=%d", &flag) == 1)
             {
-                state->AllegroLineJoin = flag;
+                state->LineJoin = flag;
             }
             else if (sscanf_s(line, "MiterLimit=%g", &state->MiterLimit) == 1)
             {
@@ -836,8 +850,8 @@ State::State()
             out_buf->appendf("ShowLines=%d\n", state->ShowLines ? 1 : 0);
             out_buf->appendf("ShowMesh=%d\n", state->ShowMesh ? 1 : 0);
             out_buf->appendf("Method=%d\n",  std::to_underlying(state->Method));
-            out_buf->appendf("Cap=%d\n", state->AllegroLineCap);
-            out_buf->appendf("Join=%d\n", state->AllegroLineJoin);
+            out_buf->appendf("Cap=%d\n", state->LineCap);
+            out_buf->appendf("Join=%d\n", state->LineJoin);
             out_buf->appendf("MiterLimit=%g\n", state->MiterLimit);
             for (const auto& polyline : state->Polylines)
             {
@@ -935,15 +949,16 @@ static void ToolbarAndTabs()
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
     ImGui::SameLine();
     {
+    using enum ImGuiEx::ImDrawFlagsExtra_;
+
         ImGui::TextUnformatted("Cap:");
         ImGui::SameLine();
         const auto value_changed = ComboBox("##Cap",
-            state.AllegroLineCap,
+            state.LineCap,
             {
-                { "None",       ALLEGRO_LINE_CAP_NONE     },
-                { "Square",     ALLEGRO_LINE_CAP_SQUARE   },
-                { "Round",      ALLEGRO_LINE_CAP_ROUND    },
-                { "Triangle",   ALLEGRO_LINE_CAP_TRIANGLE }
+                { "Butt",       ImDrawFlags_CapButt   },
+                { "Square",     ImDrawFlags_CapSquare },
+                { "Round",      ImDrawFlags_CapRound  }
             }
         );
         if (value_changed)
@@ -951,15 +966,17 @@ static void ToolbarAndTabs()
     }
     ImGui::SameLine();
     {
+        using enum ImGuiEx::ImDrawFlagsExtra_;
+
         ImGui::TextUnformatted("Join:");
         ImGui::SameLine();
         const auto value_changed = ComboBox("##Join",
-            state.AllegroLineJoin,
+            state.LineJoin,
             {
-                { "None",   ALLEGRO_LINE_JOIN_NONE   },
-                { "Bevel",  ALLEGRO_LINE_JOIN_BEVEL  },
-                { "Miter",  ALLEGRO_LINE_JOIN_MITER  },
-                { "Round",  ALLEGRO_LINE_JOIN_ROUND  }
+                { "Miter",      ImDrawFlags_JoinMiter      },
+                { "Miter Clip", ImDrawFlags_JoinMiterClip  },
+                { "Bevel",      ImDrawFlags_JoinBevel      },
+                { "Round",      ImDrawFlags_JoinRound      }
             }
         );
         if (value_changed)
@@ -1385,12 +1402,13 @@ static void EditCanvas()
             auto p4 = ImVec2(vertex4.pos.x, vertex4.pos.y);
             auto p5 = ImVec2(vertex5.pos.x, vertex5.pos.y);
 
-            draw_list->AddLine(p0, p1, color, thickness);
-            draw_list->AddLine(p1, p2, color, thickness);
-            draw_list->AddLine(p2, p0, color, thickness);
-            draw_list->AddLine(p3, p4, color, thickness);
-            draw_list->AddLine(p4, p5, color, thickness);
-            draw_list->AddLine(p5, p3, color, thickness);
+            draw_list->PathLineTo(p0); draw_list->PathLineTo(p1); draw_list->PathStroke(color, false, thickness);
+            draw_list->PathLineTo(p1); draw_list->PathLineTo(p2); draw_list->PathStroke(color, false, thickness);
+            draw_list->PathLineTo(p2); draw_list->PathLineTo(p0); draw_list->PathStroke(color, false, thickness);
+            
+            draw_list->PathLineTo(p3); draw_list->PathLineTo(p4); draw_list->PathStroke(color, false, thickness);
+            draw_list->PathLineTo(p4); draw_list->PathLineTo(p5); draw_list->PathStroke(color, false, thickness);
+            draw_list->PathLineTo(p5); draw_list->PathLineTo(p3); draw_list->PathStroke(color, false, thickness);
         }
 
         draw_list->PopClipRect();

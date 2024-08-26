@@ -4,6 +4,8 @@
 #include <imgui_internal.h>
 #include <imgui_canvas.h>
 
+#include "polyline_new.h"
+
 #include <utility>
 #include <vector>
 #include <memory>
@@ -187,6 +189,7 @@ struct Average
 struct State
 {
     using enum Method;
+    using enum ImGuiEx::ImDrawFlagsExtra_;
 
     Polyline*                       Current = nullptr;
     vector<unique_ptr<Polyline>>    Polylines;
@@ -196,9 +199,9 @@ struct State
     bool                            ShowMesh = false;
 
     Method                          Method = New;
-    int                             AllegroLineCap = -1;
-    int                             AllegroLineJoin = -1;
-    float                           MiterLimit = 100.0f;
+    ImDrawFlags                     LineCap = ImDrawFlags_CapDefault_;
+    ImDrawFlags                     LineJoin = ImDrawFlags_JoinDefault_;
+    float                           MiterLimit = 2.0f;
 
     int                             Stress = 1;
     Average<60>                     DrawDuration;

@@ -100,11 +100,13 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int co
     // miter square formula is derived here: https://www.angusj.com/clipper2/Docs/Trigonometry.htm
     const float miter_angle_limit = 2.0f / (clamped_miter_limit * clamped_miter_limit) - 1.0f;
 
+    const float miter_clip_projection_tollerance = 0.0001f;
+
     // Reserve vertices and indices for worst case scenario
     // Unused vertices and indices will be released after the loop
     const auto uv             = draw_list->_Data->TexUvWhitePixel;
-    const auto vtx_count      = count * 6 + 2; // top 6 vertices per join, 2 vertices per butt cap
-    const auto idx_count      = count * 4 * 3; // top 4 triangles per join
+    const auto vtx_count      = count * 7 + 2; // top 7 vertices per join, 2 vertices per butt cap
+    const auto idx_count      = count * 5 * 3; // top 5 triangles per join
     auto       idx_base       = draw_list->_VtxCurrentIdx;
 
     draw_list->PrimReserve(idx_count, vtx_count);
@@ -237,7 +239,7 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int co
 
                 // We do not care for degenerate case when two segments are parallel to each
                 // other because this case will always be handled by discontinuity in ThickButt
-                if (clip_projection != 0) [[likely]]
+                if (clip_projection < -miter_clip_projection_tollerance) [[likely]]
                 {
                     const auto clip_line_point   = ImVec2(p1.x + clip_line_direction.x * miter_distance_limit, p1.y + clip_line_direction.y * miter_distance_limit);
                     const auto clip_point_offset = (n0.x * (clip_line_point.x - draw_list->_VtxWritePtr[0].pos.x) + n0.y * (clip_line_point.y - draw_list->_VtxWritePtr[0].pos.y)) / clip_projection;
@@ -256,7 +258,7 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int co
 
                 // We do not care for degenerate case when two segments are parallel to each
                 // other because this case will always be handled by discontinuity in ThickButt
-                if (clip_projection != 0) [[likely]]
+                if (clip_projection > miter_clip_projection_tollerance) [[likely]]
                 {
                     const auto clip_line_point = ImVec2(p1.x - clip_line_direction.x * miter_distance_limit, p1.y - clip_line_direction.y * miter_distance_limit);
                     const auto clip_point_offset = (n0.x * (clip_line_point.x - draw_list->_VtxWritePtr[0].pos.x) + n0.y * (clip_line_point.y - draw_list->_VtxWritePtr[0].pos.y)) / clip_projection;
@@ -282,9 +284,9 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int co
             // 2 and 3 vertices are reserved for individual join types
             IM_POLYLINE_VERTEX(0, p1.x - n0.x * half_thickness, p1.y - n0.y * half_thickness);
             IM_POLYLINE_VERTEX(1, p1.x + n0.x * half_thickness, p1.y + n0.y * half_thickness);
-            IM_POLYLINE_VERTEX(4, p1.x - n1.x * half_thickness, p1.y - n1.y * half_thickness);
-            IM_POLYLINE_VERTEX(5, p1.x + n1.x * half_thickness, p1.y + n1.y * half_thickness);
-            new_vtx_count = 6;
+            IM_POLYLINE_VERTEX(5, p1.x - n1.x * half_thickness, p1.y - n1.y * half_thickness);
+            IM_POLYLINE_VERTEX(6, p1.x + n1.x * half_thickness, p1.y + n1.y * half_thickness);
+            new_vtx_count = 7;
 
             // ThickButt is always a discontinuity, yet we care here to fill the joins
             // and reuse of ThickButt vertices
@@ -294,11 +296,11 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int co
 
                 if (sin_theta < 0.0f)
                 {
-                    IM_POLYLINE_TRIANGLE(0, 3, 7, 4);
+                    IM_POLYLINE_TRIANGLE(0, 3, 8, 4);
                 }
                 else
                 {
-                    IM_POLYLINE_TRIANGLE(0, 2, 4, 6);
+                    IM_POLYLINE_TRIANGLE(0, 2, 4, 7);
                 }
 
                 draw_list->_IdxWritePtr += 3;
@@ -311,31 +313,61 @@ void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int co
                 {
                     IM_POLYLINE_VERTEX(3, p1.x + miter_offset_x, p1.y + miter_offset_y);
                     IM_POLYLINE_TRIANGLE(0, 3, 5, 4);
-                    IM_POLYLINE_TRIANGLE(1, 5, 4, 7);
+                    IM_POLYLINE_TRIANGLE(1, 5, 4, 8);
                     draw_list->_IdxWritePtr += 6;
                 }
                 else
                 {
                     IM_POLYLINE_VERTEX(3, p1.x - miter_offset_x, p1.y - miter_offset_y);
                     IM_POLYLINE_TRIANGLE(0, 2, 5, 4);
-                    IM_POLYLINE_TRIANGLE(1, 5, 4, 6);
+                    IM_POLYLINE_TRIANGLE(1, 5, 4, 7);
                     draw_list->_IdxWritePtr += 6;
                 }
             }
             else if (preferred_join_type == MiterClip) [[unlikely]]
             {
-                IM_POLYLINE_VERTEX(2, p1.x, p1.y);
-
-                if (sin_theta < 0.0f)
+                ImVec2 clip_line_direction = ImVec2(n0.x + n1.x, n0.y + n1.y);
+                const float clip_line_normal_sqr = clip_line_direction.x * clip_line_direction.x + clip_line_direction.y * clip_line_direction.y;
+                if (clip_line_normal_sqr > 0.0f) [[likely]]
                 {
-                    IM_POLYLINE_TRIANGLE(0, 3, 7, 4);
-                }
-                else
-                {
-                    IM_POLYLINE_TRIANGLE(0, 2, 4, 6);
+                    const float clip_line_inv_len = ImRsqrt(clip_line_normal_sqr);
+                    clip_line_direction.x *= clip_line_inv_len;
+                    clip_line_direction.y *= clip_line_inv_len;
                 }
 
-                draw_list->_IdxWritePtr += 3;
+                const auto clip_projection = n0.y * clip_line_direction.x - n0.x * clip_line_direction.y;
+
+                if (ImAbs(clip_projection) >= miter_clip_projection_tollerance)
+                {
+                    IM_POLYLINE_VERTEX(2, p1.x, p1.y);
+
+                    if (sin_theta < 0.0f)
+                    {
+                        const auto clip_line_point = ImVec2(p1.x + clip_line_direction.x * miter_distance_limit, p1.y + clip_line_direction.y * miter_distance_limit);
+                        const auto clip_point_offset = (n0.x * (clip_line_point.x - draw_list->_VtxWritePtr[1].pos.x) + n0.y * (clip_line_point.y - draw_list->_VtxWritePtr[1].pos.y)) / clip_projection;
+
+                        IM_POLYLINE_VERTEX(3, clip_line_point.x - (clip_point_offset * clip_line_direction.y), clip_line_point.y + (clip_point_offset * clip_line_direction.x));
+                        IM_POLYLINE_VERTEX(4, clip_line_point.x + (clip_point_offset * clip_line_direction.y), clip_line_point.y - (clip_point_offset * clip_line_direction.x));
+
+                        IM_POLYLINE_TRIANGLE(0, 8, 4, 5);
+                        IM_POLYLINE_TRIANGLE(1, 4, 6, 3);
+                        IM_POLYLINE_TRIANGLE(2, 4, 5, 6);
+                    }
+                    else
+                    {
+                        const auto clip_line_point = ImVec2(p1.x - clip_line_direction.x * miter_distance_limit, p1.y - clip_line_direction.y * miter_distance_limit);
+                        const auto clip_point_offset = (n0.x * (clip_line_point.x - draw_list->_VtxWritePtr[0].pos.x) + n0.y * (clip_line_point.y - draw_list->_VtxWritePtr[0].pos.y)) / clip_projection;
+
+                        IM_POLYLINE_VERTEX(3, clip_line_point.x + (clip_point_offset * clip_line_direction.y), clip_line_point.y - (clip_point_offset * clip_line_direction.x));
+                        IM_POLYLINE_VERTEX(4, clip_line_point.x - (clip_point_offset * clip_line_direction.y), clip_line_point.y + (clip_point_offset * clip_line_direction.x));
+
+                        IM_POLYLINE_TRIANGLE(0, 2, 4, 5);
+                        IM_POLYLINE_TRIANGLE(1, 4, 6, 7);
+                        IM_POLYLINE_TRIANGLE(2, 4, 5, 6);
+                    }
+
+                    draw_list->_IdxWritePtr += 9;
+                }
             }
         }
 
