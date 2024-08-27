@@ -1204,6 +1204,7 @@ static void EditCanvas()
         constexpr auto  closest_point_on_segment_max_distance = 5.0f;
 
         ImGui::SetCursorScreenPos(state.Canvas.ViewRect().Min);
+        ImGui::SetNextItemAllowOverlap();
         ImGui::InvisibleButton("##canvas", state.Canvas.ViewRect().GetSize());
 
         auto is_dragging_point                  = is_dragging && (drag_button == ImGuiKey_MouseLeft);
@@ -1533,6 +1534,18 @@ static void EditCanvas()
         //ImGui::Text("View Origin: (%.0f, %.0f)", polyline.View.Origin.x, polyline.View.Origin.y);
         //ImGui::Text("View Scale: %.2f", polyline.View.Scale);
 
+        ImGui::Text("Zoom:");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(100.0f);
+        if (ImGui::DragFloat("##Zoom", &polyline.View.Scale, 0.05f, 0.0f, 100.0f))
+        {
+            polyline.View.InvScale = 1.0f / polyline.View.Scale;
+            auto viewRect = state.Canvas.CalcViewRect(polyline.View);
+            polyline.ViewRect = viewRect;
+            ImGui::MarkIniSettingsDirty();
+        }
+        ImGui::PopItemWidth();
+
         ImGui::Spacing();
 
         ImGui::Text("Performance:");
@@ -1744,7 +1757,7 @@ static void PolylineWindow()
         }
         ImGui::TableNextColumn();
         ImGui::PushItemWidth(-FLT_MIN);
-        if (ImGui::DragFloat2("##Point", &point.x))
+        if (ImGui::DragFloat2("##Point", &point.x, 0.5f))
             ImGui::MarkIniSettingsDirty();
         ImGui::PopItemWidth();
         ImGui::PopID();
