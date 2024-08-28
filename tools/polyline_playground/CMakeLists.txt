@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.5)
 project(polyline_playground VERSION 0.1.0)
 
+set(ENABLE_TRACY NO)
+
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS
     *.cpp
     *.h
@@ -30,3 +32,14 @@ set_target_properties(polyline_playground PROPERTIES
     VS_DPI_AWARE "PerMonitor"
 )
 set_property(TARGET polyline_playground PROPERTY FOLDER "tools")
+
+target_compile_definitions(polyline_playground PRIVATE ENABLE_TRACY=$<IF:$<BOOL:${ENABLE_TRACY}>,1,0>)
+
+if (ENABLE_TRACY)
+    function(register_auto_filter)
+    endfunction()
+    function(spark_win_add_post_build_copy_target_to_bin)
+    endfunction()
+    add_subdirectory(V:/Work/Spark/ThirdParty/tracy ${CMAKE_CURRENT_BINARY_DIR}/tracy)
+    target_link_libraries(polyline_playground PRIVATE tracy-client)
+endif()

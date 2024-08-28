@@ -16,6 +16,10 @@
 
 #include "polyline_playground.h"
 
+#if ENABLE_TRACY
+#include "Tracy.hpp"
+#endif
+
 // Data
 static ID3D11Device*            g_pd3dDevice = nullptr;
 static ID3D11DeviceContext*     g_pd3dDeviceContext = nullptr;
@@ -110,6 +114,10 @@ int main(int, char**)
         }
         if (done)
             break;
+
+#if ENABLE_TRACY
+        FrameMark;
+#endif
 
         float dpi = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
         float snappedDpi = static_cast<float>(static_cast<int>(dpi + 0.5f));
