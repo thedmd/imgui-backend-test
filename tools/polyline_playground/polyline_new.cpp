@@ -4,6 +4,8 @@
 namespace ImGuiEx {
 
 #define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float inv_len = ImRsqrt(d2); VX *= inv_len; VY *= inv_len; } } (void)0
+//#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float inv_len = ImRsqrtPrecise(d2); VX *= inv_len; VY *= inv_len; } } (void)0
+//#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float len = ImSqrt(d2); VX /= len; VY /= len; } } (void)0
 #define IM_FIXNORMAL2F_MAX_INVLEN2          100.0f // 500.0f (see #4053, #3366)
 #define IM_FIXNORMAL2F(VX,VY)               { float d2 = VX*VX + VY*VY; if (d2 > 0.000001f) { float inv_len2 = 1.0f / d2; if (inv_len2 > IM_FIXNORMAL2F_MAX_INVLEN2) inv_len2 = IM_FIXNORMAL2F_MAX_INVLEN2; VX *= inv_len2; VY *= inv_len2; } } (void)0
 
@@ -1488,18 +1490,6 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
         draw_list->_VtxWritePtr[N].col   = C;                   \
     }
 
-//#define IM_POLYLINE_VERTEX_OFFSET(N, M, X, Y, C)                \
-//        draw_list->_VtxWritePtr[N].pos.x = draw_list->_VtxWritePtr[M].pos.x + (X); \
-//        draw_list->_VtxWritePtr[N].pos.y = draw_list->_VtxWritePtr[M].pos.y + (Y); \
-//        draw_list->_VtxWritePtr[N].uv    = uv;                  \
-//        draw_list->_VtxWritePtr[N].col   = C
-//
-//#define IM_POLYLINE_VERTEX_LERP(N, A, B, T, C)                  \
-//        draw_list->_VtxWritePtr[N].pos.x = draw_list->_VtxWritePtr[A].pos.x + (T) * (draw_list->_VtxWritePtr[B].pos.x - draw_list->_VtxWritePtr[A].pos.x); \
-//        draw_list->_VtxWritePtr[N].pos.y = draw_list->_VtxWritePtr[A].pos.y + (T) * (draw_list->_VtxWritePtr[B].pos.y - draw_list->_VtxWritePtr[A].pos.y); \
-//        draw_list->_VtxWritePtr[N].uv    = uv;                  \
-//        draw_list->_VtxWritePtr[N].col   = C
-
 #define IM_POLYLINE_TRIANGLE(N, A, B, C)                        \
     {                                                           \
         draw_list->_IdxWritePtr[N * 3 + 0] = idx_base + A;      \
@@ -1516,12 +1506,9 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
     const float miter_distance_limit     = half_thickness * clamped_miter_limit;
     const float miter_distance_limit_sqr = miter_distance_limit * miter_distance_limit;
 
-    // miter square formula is derived here: https://www.angusj.com/clipper2/Docs/Trigonometry.htm
-    //const float miter_angle_limit = 2.0f / (clamped_miter_limit * clamped_miter_limit) - 1.0f;
-    //const float miter_angle_limit = -0.9993908f; // cos(178 deg)
-      const float miter_angle_limit = -0.9996573f; // cos(178.5 deg)
+    const float miter_angle_limit = -0.9999619f; // cos(179.5)
 
-    const float miter_clip_projection_tollerance = 0.001f;
+    const float miter_clip_projection_tollerance = 0.001f; // 
 
     // Reserve vertices and indices for worst case scenario
     // Unused vertices and indices will be released after the loop
@@ -1568,29 +1555,29 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
         const float cos_theta = n0.x * n1.x + n0.y * n1.y;
         const float sin_theta = n0.y * n1.x - n0.x * n1.y;
 
+        // when angle converge to cos(180), join will be squared
+        const bool  allow_miter = cos_theta > miter_angle_limit;
+
         // miter offset formula is derived here: https://www.angusj.com/clipper2/Docs/Trigonometry.htm
-        const float n01_x = n0.x + n1.x;
-        const float n01_y = n0.y + n1.y;
+        const ImVec2 n01                       = { n0.x + n1.x, n0.y + n1.y };
 
-        const float miter_scale_factor        = cos_theta >= miter_angle_limit ? half_thickness / (1.0f + cos_theta) : FLT_MAX;
-        const float miter_offset_x            = n01_x * miter_scale_factor;
-        const float miter_offset_y            = n01_y * miter_scale_factor;
-        const float miter_distance_sqr        = miter_offset_x * miter_offset_x + miter_offset_y * miter_offset_y;
+        const float  miter_scale_factor        = allow_miter ? half_thickness / (1.0f + cos_theta) : FLT_MAX; // avoid division by zero
+        const ImVec2 miter_offset              = { n01.x * miter_scale_factor, n01.y * miter_scale_factor };
+        const float  miter_distance_sqr        = allow_miter ? miter_offset.x * miter_offset.x + miter_offset.y * miter_offset.y : FLT_MAX; // avoid loosing FLT_MAX due to n01 being zero
 
-        const float fringe_miter_scale_factor = cos_theta >= miter_angle_limit ? half_fringe_thickness / (1.0f + cos_theta) : FLT_MAX;
-        const float fringe_miter_offset_x     = n01_x * fringe_miter_scale_factor;
-        const float fringe_miter_offset_y     = n01_y * fringe_miter_scale_factor;
-        const float fringe_miter_distance_sqr = fringe_miter_offset_x * fringe_miter_offset_x + fringe_miter_offset_y * fringe_miter_offset_y;
+        const float  fringe_miter_scale_factor = allow_miter ? half_fringe_thickness / (1.0f + cos_theta) : FLT_MAX; // avoid division by zero
+        const ImVec2 fringe_miter_offset       = { n01.x * fringe_miter_scale_factor, n01.y * fringe_miter_scale_factor };
+        const float  fringe_miter_distance_sqr = allow_miter ? fringe_miter_offset.x * fringe_miter_offset.x + fringe_miter_offset.y * fringe_miter_offset.y : FLT_MAX; // avoid loosing FLT_MAX due to n01 being zero
 
         // always have to know if join miter is limited
-        const bool  limit_miter = (miter_distance_sqr > miter_distance_limit_sqr) || (cos_theta < miter_angle_limit);
+        const bool   limit_miter               = (miter_distance_sqr > miter_distance_limit_sqr) || !allow_miter;
 
         // check for discontinuity, miter distance greater than segment lengths will mangle geometry
         // so we create disconnect and create overlapping geometry just to keep overall shape correct
-        const float segment_length_sqr      = segments_length_sqr[i];
-        const float next_segment_length_sqr = segments_length_sqr[i + 1];
-        const bool  disconnected            = (segment_length_sqr < fringe_miter_distance_sqr) || (next_segment_length_sqr < fringe_miter_distance_sqr) || (segment_length_sqr < half_thickness_sqr);
-        const bool  is_continuation         = closed || !(i == count - 1);
+        const float  segment_length_sqr        = segments_length_sqr[i];
+        const float  next_segment_length_sqr   = segments_length_sqr[i + 1];
+        const bool   disconnected              = (segment_length_sqr < fringe_miter_distance_sqr) || (next_segment_length_sqr < fringe_miter_distance_sqr) || (segment_length_sqr < half_thickness_sqr);
+        const bool   is_continuation           = closed || !(i == count - 1);
 
         // select join type
         JoinType preferred_join_type = Butt;
@@ -1639,10 +1626,10 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
             // 4 vertices
             //
 
-            IM_POLYLINE_VERTEX(0, p1.x - fringe_miter_offset_x, p1.y - fringe_miter_offset_y, color_border);
-            IM_POLYLINE_VERTEX(1, p1.x -        miter_offset_x, p1.y -        miter_offset_y, color);
-            IM_POLYLINE_VERTEX(2, p1.x +        miter_offset_x, p1.y +        miter_offset_y, color);
-            IM_POLYLINE_VERTEX(3, p1.x + fringe_miter_offset_x, p1.y + fringe_miter_offset_y, color_border);
+            IM_POLYLINE_VERTEX(0, p1.x - fringe_miter_offset.x, p1.y - fringe_miter_offset.y, color_border);
+            IM_POLYLINE_VERTEX(1, p1.x -        miter_offset.x, p1.y -        miter_offset.y, color);
+            IM_POLYLINE_VERTEX(2, p1.x +        miter_offset.x, p1.y +        miter_offset.y, color);
+            IM_POLYLINE_VERTEX(3, p1.x + fringe_miter_offset.x, p1.y + fringe_miter_offset.y, color_border);
 
             new_vtx_count = 4;
         }
@@ -1678,16 +1665,16 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
         }
         else [[unlikely]] if (join_type == Bevel || join_type == MiterClip)
         {
-            ImVec2 bevel_normal = ImVec2(n01_x, n01_y);
+            ImVec2 bevel_normal = ImVec2(n01.x, n01.y);
             IM_NORMALIZE2F_OVER_ZERO(bevel_normal.x, bevel_normal.y);
 
-            ImVec2 dir_0 = { (n0.x + bevel_normal.x) * 0.5f, (n0.y + bevel_normal.y) * 0.5f };
-            ImVec2 dir_1 = { (n1.x + bevel_normal.x) * 0.5f, (n1.y + bevel_normal.y) * 0.5f };
+            const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
+
+            ImVec2 dir_0 = { sign * (n0.x + bevel_normal.x) * 0.5f, sign * (n0.y + bevel_normal.y) * 0.5f };
+            ImVec2 dir_1 = { sign * (n1.x + bevel_normal.x) * 0.5f, sign * (n1.y + bevel_normal.y) * 0.5f };
             IM_FIXNORMAL2F(dir_0.x, dir_0.y);
             IM_FIXNORMAL2F(dir_1.x, dir_1.y);
 
-            const float clip_projection = n0.y * bevel_normal.x - n0.x * bevel_normal.y;
-            const bool  clip_bevel      = join_type == MiterClip ? ImAbs(clip_projection) > miter_clip_projection_tollerance : false;
 
             //
             // Left turn                            Right turn
@@ -1708,57 +1695,53 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
             // 6 vertices
             //
 
-            [[likely]] if (!clip_bevel)
+            ImVec2 right_inner, right_outer, left_inner, left_outer, miter_inner, miter_outer;
+
+            const float  clip_projection = n0.y * bevel_normal.x - n0.x * bevel_normal.y;
+            const bool   allow_clip      = join_type == MiterClip ? ImAbs(clip_projection) >= miter_clip_projection_tollerance : false;
+
+            [[likely]] if (!allow_clip)
             {
-                if (sin_theta < 0.0f)
-                {
-                    // Left turn
-                    IM_POLYLINE_VERTEX(0, p1.x + n0.x * half_thickness,                          p1.y + n0.y * half_thickness,                          color);
-                    IM_POLYLINE_VERTEX(1, p1.x + n0.x * half_thickness + dir_0.x * fringe_width, p1.y + n0.y * half_thickness + dir_0.y * fringe_width, color_border);
-                    IM_POLYLINE_VERTEX(2, p1.x - fringe_miter_offset_x,                          p1.y - fringe_miter_offset_y,                          color_border);
-                    IM_POLYLINE_VERTEX(3, p1.x -        miter_offset_x,                          p1.y -        miter_offset_y,                          color);
-                    IM_POLYLINE_VERTEX(5, p1.x + n1.x * half_thickness + dir_1.x * fringe_width, p1.y + n1.y * half_thickness + dir_1.y * fringe_width, color_border);
-                    IM_POLYLINE_VERTEX(4, p1.x + n1.x * half_thickness,                          p1.y + n1.y * half_thickness,                          color);
-                }
-                else
-                {
-                    // Right turn
-                    IM_POLYLINE_VERTEX(0, p1.x - n0.x * half_thickness - dir_0.x * fringe_width, p1.y - n0.y * half_thickness - dir_0.y * fringe_width, color_border);
-                    IM_POLYLINE_VERTEX(1, p1.x - n0.x * half_thickness,                          p1.y - n0.y * half_thickness,                          color);
-                    IM_POLYLINE_VERTEX(2, p1.x - n1.x * half_thickness - dir_1.x * fringe_width, p1.y - n1.y * half_thickness - dir_1.y * fringe_width, color_border);
-                    IM_POLYLINE_VERTEX(3, p1.x - n1.x * half_thickness,                          p1.y - n1.y * half_thickness,                          color);
-                    IM_POLYLINE_VERTEX(4, p1.x +        miter_offset_x,                          p1.y +        miter_offset_y,                          color);
-                    IM_POLYLINE_VERTEX(5, p1.x + fringe_miter_offset_x,                          p1.y + fringe_miter_offset_y,                          color_border);
-                }
+                right_inner = { p1.x + sign * n0.x * half_thickness,                          p1.y + sign * n0.y * half_thickness                          };
+                right_outer = { p1.x + sign * n0.x * half_thickness + dir_0.x * fringe_width, p1.y + sign * n0.y * half_thickness + dir_0.y * fringe_width };
+                left_inner  = { p1.x + sign * n1.x * half_thickness,                          p1.y + sign * n1.y * half_thickness                          };
+                left_outer  = { p1.x + sign * n1.x * half_thickness + dir_1.x * fringe_width, p1.y + sign * n1.y * half_thickness + dir_1.y * fringe_width };
+                miter_inner = { p1.x - sign *        miter_offset.x,                          p1.y - sign *        miter_offset.y                          };
+                miter_outer = { p1.x - sign * fringe_miter_offset.x,                          p1.y - sign * fringe_miter_offset.y                          };
             }
             else
             {
-                const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
-
                 const ImVec2 point_on_clip_line       = ImVec2(p1.x + sign * bevel_normal.x * miter_distance_limit, p1.y + sign * bevel_normal.y * miter_distance_limit);
                 const ImVec2 point_on_bevel_edge      = ImVec2(p1.x + sign *           n0.x *       half_thickness, p1.y + sign *           n0.y *       half_thickness);
                 const ImVec2 offset                   = ImVec2(point_on_clip_line.x - point_on_bevel_edge.x, point_on_clip_line.y - point_on_bevel_edge.y);
                 const float  distance_to_intersection = (n0.x * offset.x + n0.y * offset.y) / clip_projection;
                 const ImVec2 offset_to_intersection   = ImVec2(-distance_to_intersection * bevel_normal.y, distance_to_intersection * bevel_normal.x);
 
-                if (sin_theta < 0.0f)
-                {
-                    IM_POLYLINE_VERTEX(0, point_on_clip_line.x                          - offset_to_intersection.x, point_on_clip_line.y                          - offset_to_intersection.y, color);
-                    IM_POLYLINE_VERTEX(1, point_on_clip_line.x + dir_0.x * fringe_width - offset_to_intersection.x, point_on_clip_line.y + dir_0.y * fringe_width - offset_to_intersection.y, color_border);
-                    IM_POLYLINE_VERTEX(2, p1.x                                          -    fringe_miter_offset_x, p1.y                                          -    fringe_miter_offset_y, color_border);
-                    IM_POLYLINE_VERTEX(3, p1.x                                          -           miter_offset_x, p1.y                                          -           miter_offset_y, color);
-                    IM_POLYLINE_VERTEX(4, point_on_clip_line.x                          + offset_to_intersection.x, point_on_clip_line.y                          + offset_to_intersection.y, color);
-                    IM_POLYLINE_VERTEX(5, point_on_clip_line.x + dir_1.x * fringe_width + offset_to_intersection.x, point_on_clip_line.y + dir_1.y * fringe_width + offset_to_intersection.y, color_border);
-                }
-                else
-                {
-                    IM_POLYLINE_VERTEX(0, point_on_clip_line.x - dir_0.x * fringe_width - offset_to_intersection.x, point_on_clip_line.y - dir_0.y * fringe_width - offset_to_intersection.y, color_border);
-                    IM_POLYLINE_VERTEX(1, point_on_clip_line.x                          - offset_to_intersection.x, point_on_clip_line.y                          - offset_to_intersection.y, color);
-                    IM_POLYLINE_VERTEX(2, point_on_clip_line.x - dir_1.x * fringe_width + offset_to_intersection.x, point_on_clip_line.y - dir_1.y * fringe_width + offset_to_intersection.y, color_border);
-                    IM_POLYLINE_VERTEX(3, point_on_clip_line.x                          + offset_to_intersection.x, point_on_clip_line.y                          + offset_to_intersection.y, color);
-                    IM_POLYLINE_VERTEX(4, p1.x                                          +           miter_offset_x, p1.y                                          +           miter_offset_y, color);
-                    IM_POLYLINE_VERTEX(5, p1.x                                          +    fringe_miter_offset_x, p1.y                                          +    fringe_miter_offset_y, color_border);
-                }
+                right_inner = { point_on_clip_line.x                          - offset_to_intersection.x, point_on_clip_line.y                          - offset_to_intersection.y };
+                right_outer = { point_on_clip_line.x + dir_0.x * fringe_width - offset_to_intersection.x, point_on_clip_line.y + dir_0.y * fringe_width - offset_to_intersection.y };
+                left_inner  = { point_on_clip_line.x                          + offset_to_intersection.x, point_on_clip_line.y                          + offset_to_intersection.y };
+                left_outer  = { point_on_clip_line.x + dir_1.x * fringe_width + offset_to_intersection.x, point_on_clip_line.y + dir_1.y * fringe_width + offset_to_intersection.y };
+                miter_inner = { p1.x                 - sign    *                          miter_offset.x, p1.y                 - sign    *                          miter_offset.y };
+                miter_outer = { p1.x                 - sign    *                   fringe_miter_offset.x, p1.y                 - sign    *                   fringe_miter_offset.y };
+            }
+
+            if (sin_theta < 0.0f)
+            {
+                IM_POLYLINE_VERTEX(0, right_inner.x, right_inner.y, color);
+                IM_POLYLINE_VERTEX(1, right_outer.x, right_outer.y, color_border);
+                IM_POLYLINE_VERTEX(2, miter_outer.x, miter_outer.y, color_border);
+                IM_POLYLINE_VERTEX(3, miter_inner.x, miter_inner.y, color);
+                IM_POLYLINE_VERTEX(4,  left_inner.x,  left_inner.y, color);
+                IM_POLYLINE_VERTEX(5,  left_outer.x,  left_outer.y, color_border);
+            }
+            else
+            {
+                IM_POLYLINE_VERTEX(0, right_outer.x, right_outer.y, color_border);
+                IM_POLYLINE_VERTEX(1, right_inner.x, right_inner.y, color);
+                IM_POLYLINE_VERTEX(2,  left_outer.x,  left_outer.y, color_border);
+                IM_POLYLINE_VERTEX(3,  left_inner.x,  left_inner.y, color);
+                IM_POLYLINE_VERTEX(4, miter_inner.x, miter_inner.y, color);
+                IM_POLYLINE_VERTEX(5, miter_outer.x, miter_outer.y, color_border);
             }
 
             new_vtx_count = 6;
@@ -1780,11 +1763,15 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
             // 13 vertices
             //
 
-            IM_POLYLINE_VERTEX(0, p1.x - n0.x * half_fringe_thickness, p1.y - n0.y * half_fringe_thickness, color_border);
-            IM_POLYLINE_VERTEX(1, p1.x - n0.x *        half_thickness, p1.y - n0.y *        half_thickness, color);
-            IM_POLYLINE_VERTEX(2, p1.x + n0.x *        half_thickness, p1.y + n0.y *        half_thickness, color);
-            IM_POLYLINE_VERTEX(3, p1.x + n0.x * half_fringe_thickness, p1.y + n0.y * half_fringe_thickness, color_border);
-
+            IM_POLYLINE_VERTEX( 0, p1.x - n0.x * half_fringe_thickness, p1.y - n0.y * half_fringe_thickness, color_border);
+            IM_POLYLINE_VERTEX( 1, p1.x - n0.x *        half_thickness, p1.y - n0.y *        half_thickness, color);
+            IM_POLYLINE_VERTEX( 2, p1.x + n0.x *        half_thickness, p1.y + n0.y *        half_thickness, color);
+            IM_POLYLINE_VERTEX( 3, p1.x + n0.x * half_fringe_thickness, p1.y + n0.y * half_fringe_thickness, color_border);
+            IM_POLYLINE_VERTEX( 4, p1.x,                                p1.y,                                color);
+            IM_POLYLINE_VERTEX( 5, p1.x,                                p1.y,                                color);
+            IM_POLYLINE_VERTEX( 6, p1.x,                                p1.y,                                color);
+            IM_POLYLINE_VERTEX( 7, p1.x,                                p1.y,                                color);
+            IM_POLYLINE_VERTEX( 8, p1.x,                                p1.y,                                color);
             IM_POLYLINE_VERTEX( 9, p1.x - n1.x * half_fringe_thickness, p1.y - n1.y * half_fringe_thickness, color_border);
             IM_POLYLINE_VERTEX(10, p1.x - n1.x *        half_thickness, p1.y - n1.y *        half_thickness, color);
             IM_POLYLINE_VERTEX(11, p1.x + n1.x *        half_thickness, p1.y + n1.y *        half_thickness, color);
@@ -1792,6 +1779,7 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
 
             new_vtx_count = 13;
 
+#if 1
             // there are 4 vertices in the previous segment, to make indices less confusing
             // we shift base do 0 will be first vertex of ThickButt, later we undo that
             // and segments will be connected properly
@@ -1832,8 +1820,8 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
                 const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
 
                 IM_POLYLINE_VERTEX(4, p1.x,                                p1.y,                                color);
-                IM_POLYLINE_VERTEX(5, p1.x + sign *        miter_offset_x, p1.y + sign *        miter_offset_y, color);
-                IM_POLYLINE_VERTEX(6, p1.x + sign * fringe_miter_offset_x, p1.y + sign * fringe_miter_offset_y, color_border);
+                IM_POLYLINE_VERTEX(5, p1.x + sign *        miter_offset.x, p1.y + sign *        miter_offset.y, color);
+                IM_POLYLINE_VERTEX(6, p1.x + sign * fringe_miter_offset.x, p1.y + sign * fringe_miter_offset.y, color_border);
 
                 if (sin_theta < 0.0f)
                 {
@@ -1865,9 +1853,9 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
                 // 
                 //             ~            7                |                7            ~               
                 //           ~ ~ --+---------+               |               +---------+-- ~ ~             
-                //             ~ 12|    ...'':'.             |             .':''...    |9  ~               
-                //             ~   |..''   8: . '.           |           .' 8 :    ''..|   ~               
-                //           ~ ~ --+--------+  .  '.         |         .'  .. +--------+-- ~ ~             
+                //             ~ 12|''..     :'.             |             .':''...    |9  ~               
+                //             ~   |    ''..: . '.           |           .' 8 :    ''..|   ~               
+                //           ~ ~ --+--------+8 .  '.         |         .'  .. +--------+-- ~ ~             
                 //             ~ 11|       ' '. .   '.       |       .'..'' .' '       |10 ~               
                 //       <     ~   |      '    '.. ...'+ 6   |   6 +'...  .'    '      |   ~     <         
                 //     to next ~   |    .'    ...+'  .'|     |     |    '+...    '.    |   ~ to next       
@@ -1890,7 +1878,7 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
 
                 const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
 
-                ImVec2 bevel_normal = ImVec2(n01_x, n01_y);
+                ImVec2 bevel_normal = n01;
                 IM_NORMALIZE2F_OVER_ZERO(bevel_normal.x, bevel_normal.y);
 
                 ImVec2 dir_0 = { sign * (n0.x + bevel_normal.x) * 0.5f, sign * (n0.y + bevel_normal.y) * 0.5f };
@@ -1898,12 +1886,9 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
                 IM_FIXNORMAL2F(dir_0.x, dir_0.y);
                 IM_FIXNORMAL2F(dir_1.x, dir_1.y);
 
-                const float clip_projection = n0.y * bevel_normal.x - n0.x * bevel_normal.y;
-                const bool  clip_bevel      = preferred_join_type == MiterClip ? ImAbs(clip_projection) > miter_clip_projection_tollerance : false;
-
                 IM_POLYLINE_VERTEX(4, p1.x, p1.y, color);
 
-                [[likely]] if (!clip_bevel)
+                [[likely]] if (preferred_join_type == Bevel)
                 {
                     // 5 and 8 vertices are already present
                     IM_POLYLINE_VERTEX(6, p1.x + sign * n0.x * half_thickness + dir_0.x * fringe_width, p1.y + sign * n0.y * half_thickness + dir_0.y * fringe_width, color_border);
@@ -1925,7 +1910,7 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
                         // Right turn, for full bevel we skip collapsed triangles (same vertices: 5 == 1, 8 == 10)
 
                         IM_POLYLINE_TRIANGLE(0,  4, 10, 1);
-                        IM_POLYLINE_TRIANGLE(1,  0,  5, 6);
+                        IM_POLYLINE_TRIANGLE(1,  0,  1, 6);
                         IM_POLYLINE_TRIANGLE(2, 10,  9, 7);
                         IM_POLYLINE_TRIANGLE(3, 10,  7, 6);
                         IM_POLYLINE_TRIANGLE(4, 10,  6, 1);
@@ -1935,10 +1920,11 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
                 }
                 else
                 {
-                    [[likely]] if (cos_theta >= miter_angle_limit)
+                    [[likely]] if (allow_miter)
                     {
                         // clip bevel to miter distance
 
+                        const float  clip_projection          = n0.y * bevel_normal.x - n0.x * bevel_normal.y;
                         const ImVec2 point_on_clip_line       = ImVec2(p1.x + sign * bevel_normal.x * miter_distance_limit, p1.y + sign * bevel_normal.y * miter_distance_limit);
                         const ImVec2 point_on_bevel_edge      = ImVec2(p1.x + sign *           n0.x *       half_thickness, p1.y + sign *           n0.y *       half_thickness);
                         const ImVec2 offset                   = ImVec2(point_on_clip_line.x - point_on_bevel_edge.x, point_on_clip_line.y - point_on_bevel_edge.y);
@@ -1972,8 +1958,8 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
                         IM_POLYLINE_TRIANGLE(2,  4, 8, 11);
                         IM_POLYLINE_TRIANGLE(3,  2, 6,  5);
                         IM_POLYLINE_TRIANGLE(4,  2, 3,  6);
-                        IM_POLYLINE_TRIANGLE(5, 11, 7, 12);
-                        IM_POLYLINE_TRIANGLE(6, 11, 8,  7);
+                        IM_POLYLINE_TRIANGLE(5, 11, 8, 12);
+                        IM_POLYLINE_TRIANGLE(6,  8, 7, 12);
                         IM_POLYLINE_TRIANGLE(7,  5, 7,  8);
                         IM_POLYLINE_TRIANGLE(8,  5, 6,  7);
                     }
@@ -1996,6 +1982,7 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
 
             // Restore index base (see commend next to 'idx_base += 4' above)
             idx_base -= 4;
+#endif
         }
 
         if (join_type == Bevel || join_type == MiterClip)
@@ -2123,7 +2110,6 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
     {
         draw_list->_VtxWritePtr -= 4;
 
-#if 1
         [[unlikely]] if (cap == ImDrawFlags_CapSquare)
         {
             const ImVec2 n0 = normals[0];
@@ -2157,7 +2143,6 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
 
             draw_list->_IdxWritePtr += 12;
         }
-#endif
     }
 
     const int used_vtx_count = static_cast<int>(draw_list->_VtxWritePtr - vtx_start);
@@ -2171,6 +2156,58 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
     draw_list->PrimUnreserve(unused_idx_count, unused_vtx_count);
 
     draw_list->_VtxCurrentIdx = idx_base;
+
+#if 0
+    [[unlikely]] if (!closed && cap == ImDrawFlags_CapRound)
+    {
+        const ImVec2 p0 = data[0];
+        const ImVec2 p1 = data[count - 1];
+        const ImVec2 n0 = normals[0];
+        const ImVec2 n1 = normals[count - 1];
+
+        const auto begin_angle = ImAtan2(n0.y, n0.x);
+        const auto   end_angle = ImAtan2(n1.y, n1.x);
+
+        const auto half_thickness_to_half_fringe_thickness = half_fringe_thickness / half_thickness;
+
+        draw_list->PathClear();
+        draw_list->PathArcTo({ 0, 0 }, half_thickness, begin_angle - IM_PI, begin_angle);
+        const int begin_point_count = draw_list->_Path.Size;
+        //draw_list->PathArcTo({ 0, 0 }, half_thickness, end_angle, end_angle + IM_PI);
+        //const int end_point_count = draw_list->_Path.Size - begin_point_count;
+
+        const int vtx_count = (begin_point_count /*+ end_point_count*/) * 2;
+        const int idx_count = (begin_point_count /*+ end_point_count */- 1) * 9;
+
+        draw_list->PrimReserve(idx_count, vtx_count);
+
+        const ImVec2* arc_data = draw_list->_Path.Data;
+        for (int i = 0; i < begin_point_count; i++)
+        {
+            const ImVec2 point = *arc_data++;
+
+            IM_POLYLINE_VERTEX(0, p0.x + point.x,                                           p0.y + point.y,                                           color);
+            IM_POLYLINE_VERTEX(1, p0.x + point.x * half_thickness_to_half_fringe_thickness, p0.y + point.y * half_thickness_to_half_fringe_thickness, color_border);
+
+            [[likely]] if (i < begin_point_count - 1)
+            {
+                IM_POLYLINE_TRIANGLE(0, 0, 2, 1);
+                IM_POLYLINE_TRIANGLE(1, 1, 2, 3);
+                draw_list->_IdxWritePtr[6] = idx_base;
+                draw_list->_IdxWritePtr[7] = draw_list->_VtxCurrentIdx + begin_point_count * 2 - 2;
+                draw_list->_IdxWritePtr[8] = idx_base + 2;
+
+                draw_list->_IdxWritePtr += 9;
+
+            }
+            
+            draw_list->_VtxWritePtr += 2;
+            idx_base += 2;
+        }
+
+        draw_list->_VtxCurrentIdx = idx_base;
+    }
+#endif
 
 #undef IM_POLYLINE_VERTEX
 #undef IM_POLYLINE_TRIANGLE
