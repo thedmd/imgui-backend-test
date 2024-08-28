@@ -4,6 +4,7 @@
 namespace ImGuiEx {
 
 #define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float inv_len = ImRsqrt(d2); VX *= inv_len; VY *= inv_len; } } (void)0
+#define IM_NORMALIZE2F_OVER_ZERO_D2(VX,VY,D2)  {       D2 = VX*VX + VY*VY; if (D2 > 0.0f) { float inv_len = ImRsqrt(D2); VX *= inv_len; VY *= inv_len; } } (void)0
 //#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float inv_len = ImRsqrtPrecise(d2); VX *= inv_len; VY *= inv_len; } } (void)0
 //#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float len = ImSqrt(d2); VX /= len; VY /= len; } } (void)0
 #define IM_FIXNORMAL2F_MAX_INVLEN2          100.0f // 500.0f (see #4053, #3366)
@@ -1779,7 +1780,6 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
 
             new_vtx_count = 13;
 
-#if 1
             // there are 4 vertices in the previous segment, to make indices less confusing
             // we shift base do 0 will be first vertex of ThickButt, later we undo that
             // and segments will be connected properly
@@ -1982,7 +1982,6 @@ static void ImDrawList_Polyline_AA_Inner(ImDrawList* draw_list, const ImVec2* da
 
             // Restore index base (see commend next to 'idx_base += 4' above)
             idx_base -= 4;
-#endif
         }
 
         if (join_type == Bevel || join_type == MiterClip)
