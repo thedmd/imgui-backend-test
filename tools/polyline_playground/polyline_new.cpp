@@ -3,11 +3,50 @@
 
 namespace ImGuiEx {
 
-#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float inv_len = ImRsqrt(d2); VX *= inv_len; VY *= inv_len; } } (void)0
+//#define IM_RSQRT(x)                         (1.0f / sqrtf(x))
+#define IM_RSQRT(x)                         ImRsqrt(x)
+#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float inv_len = IM_RSQRT(d2); VX *= inv_len; VY *= inv_len; } } (void)0
 //#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float inv_len = ImRsqrtPrecise(d2); VX *= inv_len; VY *= inv_len; } } (void)0
 //#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; if (d2 > 0.0f) { float len = ImSqrt(d2); VX /= len; VY /= len; } } (void)0
 #define IM_FIXNORMAL2F_MAX_INVLEN2          100.0f // 500.0f (see #4053, #3366)
 #define IM_FIXNORMAL2F(VX,VY)               { float d2 = VX*VX + VY*VY; if (d2 > 0.000001f) { float inv_len2 = 1.0f / d2; if (inv_len2 > IM_FIXNORMAL2F_MAX_INVLEN2) inv_len2 = IM_FIXNORMAL2F_MAX_INVLEN2; VX *= inv_len2; VY *= inv_len2; } } (void)0
+
+#define IM_POLYLINE_VERTEX(N, X, Y, C)                          \
+    {                                                           \
+        vtx_write[N].pos.x = X;                                 \
+        vtx_write[N].pos.y = Y;                                 \
+        vtx_write[N].uv    = uv;                                \
+        vtx_write[N].col   = C;                                 \
+    }
+
+#define IM_POLYLINE_TRIANGLE_BEGIN()                            \
+    do {                                                        \
+        const ImDrawIdx idx_base = idx_offset                   \
+
+#define IM_POLYLINE_TRIANGLE(A, B, C)                           \
+        *idx_write++ = (ImDrawIdx)(idx_base + A);               \
+        *idx_write++ = (ImDrawIdx)(idx_base + B);               \
+        *idx_write++ = (ImDrawIdx)(idx_base + C)                \
+
+#define IM_POLYLINE_TRIANGLE_END()                              \
+    } while (false)
+
+#define IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i0, i1)             \
+        do                                                      \
+        {                                                       \
+            float dx = data[i1].x - data[i0].x;                 \
+            float dy = data[i1].y - data[i0].y;                 \
+            float d2 = dx * dx + dy * dy;                       \
+            if (d2 > 0.0f)                                      \
+            {                                                   \
+                float inv_len = IM_RSQRT(d2);                   \
+                dx *= inv_len;                                  \
+                dy *= inv_len;                                  \
+            }                                                   \
+            normals[i0].x =  dy;                                \
+            normals[i0].y = -dx;                                \
+            segments_length_sqr[i1] = d2;                       \
+        } while (false)
 
 static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, const int count, const ImU32 color, const ImDrawFlags draw_flags, const float thickness, float miter_limit)
 {
@@ -22,11 +61,11 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
     //   - ThickButt: flat cap with extra vertices, used for discontinuity between segments
     enum JoinType { Miter, MiterClip, Bevel, Butt, ThickButt };
 
-    const bool        closed         = !!(draw_flags & ImDrawFlags_Closed) && (count > 2);
-    const ImDrawFlags join_flags     = draw_flags & ImDrawFlags_JoinMask_;
-    const ImDrawFlags cap_flags      = draw_flags & ImDrawFlags_CapMask_;
-    const ImDrawFlags join           = join_flags ? join_flags : ImDrawFlags_JoinDefault_;
-    const ImDrawFlags cap            = cap_flags ? cap_flags : ImDrawFlags_CapDefault_;
+    const bool        closed     = !!(draw_flags & ImDrawFlags_Closed) && (count > 2);
+    const ImDrawFlags join_flags = draw_flags & ImDrawFlags_JoinMask_;
+    const ImDrawFlags cap_flags  = draw_flags & ImDrawFlags_CapMask_;
+    const ImDrawFlags join       = join_flags ? join_flags : ImDrawFlags_JoinDefault_;
+    const ImDrawFlags cap        = cap_flags ? cap_flags : ImDrawFlags_CapDefault_;
 
     // Pick default join type based on join flags
     const JoinType default_join_type       = join == ImDrawFlags_JoinBevel ? Bevel : (join == ImDrawFlags_JoinMiterClip ? MiterClip : Miter);
@@ -48,55 +87,21 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
         normals = reinterpret_cast<ImVec2*>(draw_list->_Data->TempBuffer.Data);
         segments_length_sqr = reinterpret_cast<float*>(normals + segment_normal_count);
 
-#define IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i0, i1, n)              \
-        do                                                          \
-        {                                                           \
-            float dx = data[i1].x - data[i0].x;                     \
-            float dy = data[i1].y - data[i0].y;                     \
-            float d2 = dx * dx + dy * dy;                           \
-            if (d2 > 0.0f)                                          \
-            {                                                       \
-                float inv_len = ImRsqrt(d2);                        \
-                dx *= inv_len;                                      \
-                dy *= inv_len;                                      \
-            }                                                       \
-            normals[i0].x =  dy;                                    \
-            normals[i0].y = -dx;                                    \
-            segments_length_sqr[i1] = d2;                           \
-        } while (false)
+        for (int i = 0; i < count - 1; ++i)
+            IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i, i + 1);
 
-            for (int i = 0; i < count - 1; ++i)
-                IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i, i + 1, normals[i]);
+        if (closed)
+        {
+            IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(count - 1, 0);
+        }
+        else
+        {
+            normals[count - 1] = normals[count - 2];
+            segments_length_sqr[0] = segments_length_sqr[count - 1];
+        }
 
-            if (closed)
-            {
-                IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(count - 1, 0, normals[count - 1]);
-            }
-            else
-            {
-                normals[count - 1] = normals[count - 2];
-                segments_length_sqr[0] = segments_length_sqr[count - 1];
-            }
-
-            segments_length_sqr[count] = segments_length_sqr[0];
-
-#undef IM_POLYLINE_COMPUTE_SEGMENT_DETAILS
+        segments_length_sqr[count] = segments_length_sqr[0];
      }
-
-#define IM_POLYLINE_VERTEX(N, X, Y, C)                          \
-    {                                                           \
-        draw_list->_VtxWritePtr[N].pos.x = X;                   \
-        draw_list->_VtxWritePtr[N].pos.y = Y;                   \
-        draw_list->_VtxWritePtr[N].uv    = uv;                  \
-        draw_list->_VtxWritePtr[N].col   = C;                   \
-    }
-
-#define IM_POLYLINE_TRIANGLE(N, A, B, C)                        \
-    {                                                           \
-        draw_list->_IdxWritePtr[N * 3 + 0] = idx_base + A;      \
-        draw_list->_IdxWritePtr[N * 3 + 1] = idx_base + B;      \
-        draw_list->_IdxWritePtr[N * 3 + 2] = idx_base + C;      \
-    }
 
     // Most dimensions are squares of the actual values, fit nicely with trigonometric identities
     const float half_thickness        = thickness * 0.5f;
@@ -108,19 +113,19 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
 
     const float miter_angle_limit = -0.9999619f; // cos(179.5)
 
-    const float miter_clip_projection_tollerance = 0.001f; // 
+    const float miter_clip_projection_tollerance = 0.001f; //
 
     // Reserve vertices and indices for worst case scenario
     // Unused vertices and indices will be released after the loop
-    const auto uv        = draw_list->_Data->TexUvWhitePixel;
-    const auto vtx_count = (count * 7 + 2);  // top 7 vertices per join, 2 vertices per butt cap
-    const auto idx_count = (count * 9) * 3;  // top 9 triangles per join
-    auto       idx_base  = draw_list->_VtxCurrentIdx;
+    const ImVec2 uv         = draw_list->_Data->TexUvWhitePixel;
+    const int    vtx_count  = (count * 7 + 2);  // top 7 vertices per join, 2 vertices per butt cap
+    const int    idx_count  = (count * 9) * 3;  // top 9 triangles per join
+    unsigned int idx_offset = draw_list->_VtxCurrentIdx;
 
     draw_list->PrimReserve(idx_count, vtx_count);
 
-    const auto vtx_start = draw_list->_VtxWritePtr;
-    const auto idx_start = draw_list->_IdxWritePtr;
+    ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
+    ImDrawIdx*  idx_write = draw_list->_IdxWritePtr;
 
     // Last two vertices in the vertex buffer are reserved to next segment to build upon
     // This is true for all segments.
@@ -134,15 +139,15 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
     //   |                 |
     //   +--------x--------+
     //   0        p0       1
-    // 
+    //
     // 4 vertices
     //
     IM_POLYLINE_VERTEX(0, p0.x - n0.x * half_thickness, p0.y - n0.y * half_thickness, color);
     IM_POLYLINE_VERTEX(1, p0.x + n0.x * half_thickness, p0.y + n0.y * half_thickness, color);
 
-    draw_list->_VtxWritePtr += 2;
+    vtx_write += 2;
 
-    int last_join_type = Butt;
+    JoinType last_join_type = Butt;
 
     for (int i = closed ? 0 : 1; i < count; ++i)
     {
@@ -203,16 +208,16 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
             //
             // Miter join is skew to the left or right, order of vertices does
             // not change.
-            // 
+            //
             //   0
-            //   +   
-            //   |'-_  
+            //   +
+            //   |'-_
             //   |   '-_
             //   |      '-x
-            //   |         '-_   
+            //   |         '-_
             //   |            '.
             //   |              '-_ 1
-            //   |           ......+  
+            //   |           ......+
             //   |.....''''''      |
             //   + ~ ~ ~ ~ ~ ~ ~ ~ +
             //  -2                -1
@@ -234,7 +239,7 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
             //   |                 |
             //   +--------x--------+
             //   2        p1       3
-            // 
+            //
             //   0        p0       1
             //   +--------x--------+
             //   |                 |
@@ -255,19 +260,19 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
         {
             //
             // Left turn                            Right turn
-            //                                      
-            //                                                  
-            //                                                 
-            //                                                  
+            //
+            //
+            //
+            //
             //           2 +                                    + 2
             //            . \                                  / .
             //           .   \                                /   .
             //        < .     \                              /     . >
             //         .   x   \                            /   x   .
             //      1 .         \                          /         . 5
-            //      .+...........+                        +...........+  
-            //            /\    0                          0    /\           
-            //                                                              
+            //      .+...........+                        +...........+
+            //            /\    0                          0    /\
+            //
             //
             // 3 vertices
             //
@@ -346,35 +351,35 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
             // there are 2 vertices in the previous segment, to make indices less confusing
             // we shift base do 0 will be first vertex of ThickButt, later we undo that
             // and segments will be connected properly
-            idx_base += 2;
+            idx_offset += 2;
 
             [[likely]] if (preferred_join_type == Miter)
             {
                 //
                 // Miter join between two discontinuous segments
-                // 
+                //
                 // Left turn                                     Right turn
-                // 
-                //             ~                      3      |      3                      ~               
-                //           ~ ~ --+-------------------+     |     +-------------------+-- ~ ~             
-                //             ~  6|                 .'|     |     |                 .'|5  ~               
-                //             ~   |               .'  |     |     |               .'  |   ~               
-                //             ~   |             .'    |     |     |             .'    |   ~               
-                //             ~   |           .'      |     |     |           .'      |   ~               
-                //       <     ~   |         .'        |     |     |         .'        |   ~     <         
-                //     to next ~   |       .'          |     |     |       .'          |   ~ to next       
-                //             ~   |     .'            |     |     |     .'            |   ~               
-                //             ~   |   .'              |     |     |   .'              |   ~               
-                //             ~   | .'                |     |     | .'                |   ~               
-                //   +-------------+-------------------+     |     +-------------------+-------------+     
-                //  0|         ~  2|                  1|     |     |0                  |2  ~         |1    
-                // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   
-                //   |         ~   |                   |     |     |                   |   ~         |     
-                //   ~         ~   |                   ~     |     ~                   |   ~         ~     
-                //             ~   |        /\               |               \/        |   ~               
-                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap     
-                //           ~ ~ --+                         |                         +-- ~ ~             
-                //             ~  5                          |                          6  ~               
+                //
+                //             ~                      3      |      3                      ~
+                //           ~ ~ --+-------------------+     |     +-------------------+-- ~ ~
+                //             ~  6|                 .'|     |     |                 .'|5  ~
+                //             ~   |               .'  |     |     |               .'  |   ~
+                //             ~   |             .'    |     |     |             .'    |   ~
+                //             ~   |           .'      |     |     |           .'      |   ~
+                //       <     ~   |         .'        |     |     |         .'        |   ~     <
+                //     to next ~   |       .'          |     |     |       .'          |   ~ to next
+                //             ~   |     .'            |     |     |     .'            |   ~
+                //             ~   |   .'              |     |     |   .'              |   ~
+                //             ~   | .'                |     |     | .'                |   ~
+                //   +-------------+-------------------+     |     +-------------------+-------------+
+                //  0|         ~  2|                  1|     |     |0                  |2  ~         |1
+                // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+                //   |         ~   |                   |     |     |                   |   ~         |
+                //   ~         ~   |                   ~     |     ~                   |   ~         ~
+                //             ~   |        /\               |               \/        |   ~
+                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap
+                //           ~ ~ --+                         |                         +-- ~ ~
+                //             ~  5                          |                          6  ~
                 //
                 // 2 of 3 extra vertices allocated
                 // 2 extra triangles (4 total per join)
@@ -387,44 +392,46 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
 
                 if (sin_theta < 0.0f)
                 {
-                    IM_POLYLINE_TRIANGLE(0, 2, 1, 3);
-                    IM_POLYLINE_TRIANGLE(1, 2, 3, 6);
+                    IM_POLYLINE_TRIANGLE_BEGIN();
+                    IM_POLYLINE_TRIANGLE(2, 1, 3);
+                    IM_POLYLINE_TRIANGLE(2, 3, 6);
+                    IM_POLYLINE_TRIANGLE_END();
                 }
                 else
                 {
-                    IM_POLYLINE_TRIANGLE(0, 0, 2, 5);
-                    IM_POLYLINE_TRIANGLE(1, 0, 5, 3);
+                    IM_POLYLINE_TRIANGLE_BEGIN();
+                    IM_POLYLINE_TRIANGLE(0, 2, 5);
+                    IM_POLYLINE_TRIANGLE(0, 5, 3);
+                    IM_POLYLINE_TRIANGLE_END();
                 }
-
-                draw_list->_IdxWritePtr += 6;
             }
             else [[unlikely]] if (preferred_join_type == Bevel || preferred_join_type == MiterClip)
             {
                 //
                 // Bevel join between two discontinuous segments
-                // 
+                //
                 // Left turn                                     Right turn
-                // 
-                //             ~            4                |                4            ~               
-                //           ~ ~ --+---------+               |               +---------+-- ~ ~             
-                //             ~  6|        . '.             |             .' .        |5  ~               
-                //             ~   |       .    '.           |           .'    .       |   ~               
-                //             ~   |      .       '.         |         .'       .      |   ~               
-                //             ~   |     .          '.       |       .'          .     |   ~               
-                //       <     ~   |    .           . '+ 3   |   3 +' .           .    |   ~     <         
-                //     to next ~   |   .        . '    |     |     |    ' .        .   |   ~ to next       
-                //             ~   |  .     . '        |     |     |        ' .     .  |   ~               
-                //             ~   | .  . '            |     |     |            ' .  . |   ~               
-                //             ~   |. '                |     |     |                ' .|   ~               
-                //   +-------------+-------------------+     |     +-------------------+-------------+     
-                //  0|         ~  2|                  1|     |     |0                  |2  ~         |1    
-                // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   
-                //   |         ~   |                   |     |     |                   |   ~         |     
-                //   ~         ~   |                   ~     |     ~                   |   ~         ~     
-                //             ~   |        /\               |               \/        |   ~               
-                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap     
-                //           ~ ~ --+                         |                         +-- ~ ~             
-                //             ~  5                          |                          6  ~               
+                //
+                //             ~            4                |                4            ~
+                //           ~ ~ --+---------+               |               +---------+-- ~ ~
+                //             ~  6|        . '.             |             .' .        |5  ~
+                //             ~   |       .    '.           |           .'    .       |   ~
+                //             ~   |      .       '.         |         .'       .      |   ~
+                //             ~   |     .          '.       |       .'          .     |   ~
+                //       <     ~   |    .           . '+ 3   |   3 +' .           .    |   ~     <
+                //     to next ~   |   .        . '    |     |     |    ' .        .   |   ~ to next
+                //             ~   |  .     . '        |     |     |        ' .     .  |   ~
+                //             ~   | .  . '            |     |     |            ' .  . |   ~
+                //             ~   |. '                |     |     |                ' .|   ~
+                //   +-------------+-------------------+     |     +-------------------+-------------+
+                //  0|         ~  2|                  1|     |     |0                  |2  ~         |1
+                // ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+                //   |         ~   |                   |     |     |                   |   ~         |
+                //   ~         ~   |                   ~     |     ~                   |   ~         ~
+                //             ~   |        /\               |               \/        |   ~
+                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap
+                //           ~ ~ --+                         |                         +-- ~ ~
+                //             ~  5                          |                          6  ~
                 //
                 // 3 of 3 extra vertices allocated
                 // 3 extra triangles (5 total per join)
@@ -442,15 +449,17 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
                     if (sin_theta < 0.0f)
                     {
                         // Left turn, for full bevel we skip collapsed triangles (same vertices: 3 == 0, 4 == 5)
-                        IM_POLYLINE_TRIANGLE(0,  2, 1, 6);
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE(2, 1, 6);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
                     else
                     {
                         // Right turn, for full bevel we skip collapsed triangles (same vertices: 5 == 1, 8 == 10)
-                        IM_POLYLINE_TRIANGLE(0,  2, 5, 0);
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE(2, 5, 0);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
-                        
-                    draw_list->_IdxWritePtr += 3;
                 }
                 else
                 {
@@ -481,62 +490,65 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
 
                     if (sin_theta < 0.0f)
                     {
-                        IM_POLYLINE_TRIANGLE(0, 2, 1, 3);
-                        IM_POLYLINE_TRIANGLE(1, 2, 3, 4);
-                        IM_POLYLINE_TRIANGLE(2, 2, 4, 6);
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE(2, 1, 3);
+                        IM_POLYLINE_TRIANGLE(2, 3, 4);
+                        IM_POLYLINE_TRIANGLE(2, 4, 6);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
                     else
                     {
-                        IM_POLYLINE_TRIANGLE(0, 2, 5, 4);
-                        IM_POLYLINE_TRIANGLE(1, 2, 4, 3);
-                        IM_POLYLINE_TRIANGLE(2, 2, 3, 0);
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE(2, 5, 4);
+                        IM_POLYLINE_TRIANGLE(2, 4, 3);
+                        IM_POLYLINE_TRIANGLE(2, 3, 0);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
-
-                    draw_list->_IdxWritePtr += 9;
                 }
             }
 
             // Restore index base (see commend next to 'idx_base += 2' above)
-            idx_base -= 2;
+            idx_offset -= 2;
         }
 
         [[unlikely]] if (join_type == Bevel || join_type == MiterClip)
         {
-                // Left turn                         Right turn
-                //
-                //                  4              |              3
-                //                   +             |             +
-                //                 .' \            |            / '.
-                //               .'    \           |           /    '.
-                //             .'       \          |          /       '.
-                //           .'          \         |         /          '.
-                //         .'             \        |        /             '.
-                //       .'                \       |       /                '.
-                //   3 .'         ..........+ 2    |    2 +..........         '. 4
-                //    +.....''''''   ....'''|      |      |'''....   ''''''.....+
-                //    |       ....'''       |      |      |       '''....       |
-                //    |....'''              |      |      |              '''....|
-                //    + ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ +      |      + ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ +
-                //    0                     1      |      0                     1
-                //
-                // 3 triangles
-                //
+            // Left turn                         Right turn
+            //
+            //                  4              |              3
+            //                   +             |             +
+            //                 .' \            |            / '.
+            //               .'    \           |           /    '.
+            //             .'       \          |          /       '.
+            //           .'          \         |         /          '.
+            //         .'             \        |        /             '.
+            //       .'                \       |       /                '.
+            //   3 .'         ..........+ 2    |    2 +..........         '. 4
+            //    +.....''''''   ....'''|      |      |'''....   ''''''.....+
+            //    |       ....'''       |      |      |       '''....       |
+            //    |....'''              |      |      |              '''....|
+            //    + ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ +      |      + ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ +
+            //    0                     1      |      0                     1
+            //
+            // 3 triangles
+            //
 
             if (sin_theta < 0.0f)
             {
-                IM_POLYLINE_TRIANGLE( 0, 0, 1, 2);
-                IM_POLYLINE_TRIANGLE( 1, 0, 2, 3);
-                IM_POLYLINE_TRIANGLE( 2, 3, 2, 4);
+                IM_POLYLINE_TRIANGLE_BEGIN();
+                IM_POLYLINE_TRIANGLE(0, 1, 2);
+                IM_POLYLINE_TRIANGLE(0, 2, 3);
+                IM_POLYLINE_TRIANGLE(3, 2, 4);
+                IM_POLYLINE_TRIANGLE_END();
             }
             else
             {
-                IM_POLYLINE_TRIANGLE( 0, 0, 1, 2);
-                IM_POLYLINE_TRIANGLE( 1, 1, 4, 2);
-                IM_POLYLINE_TRIANGLE( 2, 4, 3, 2);
-
+                IM_POLYLINE_TRIANGLE_BEGIN();
+                IM_POLYLINE_TRIANGLE(0, 1, 2);
+                IM_POLYLINE_TRIANGLE(1, 4, 2);
+                IM_POLYLINE_TRIANGLE(4, 3, 2);
+                IM_POLYLINE_TRIANGLE_END();
             }
-
-            draw_list->_IdxWritePtr += 9;
         }
         else
         {
@@ -557,14 +569,15 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
             //
             // 2 triangles
             //
-            IM_POLYLINE_TRIANGLE(0, 0, 1, 3);
-            IM_POLYLINE_TRIANGLE(1, 0, 3, 2);
 
-            draw_list->_IdxWritePtr += 6;
+            IM_POLYLINE_TRIANGLE_BEGIN();
+            IM_POLYLINE_TRIANGLE(0, 1, 3);
+            IM_POLYLINE_TRIANGLE(0, 3, 2);
+            IM_POLYLINE_TRIANGLE_END();
         }
 
-        draw_list->_VtxWritePtr += new_vtx_count;
-        idx_base += new_vtx_count;
+        vtx_write += new_vtx_count;
+        idx_offset += new_vtx_count;
 
         p0 = p1;
         n0 = n1;
@@ -574,43 +587,45 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
 
     if (closed)
     {
-        idx_base += 2;
+        idx_offset += 2;
 
-        vtx_start[0].pos = draw_list->_VtxWritePtr[-2].pos;
-        vtx_start[1].pos = draw_list->_VtxWritePtr[-1].pos;
+        draw_list->_VtxWritePtr[0].pos = vtx_write[-2].pos;
+        draw_list->_VtxWritePtr[1].pos = vtx_write[-1].pos;
     }
     else
     {
-        draw_list->_VtxWritePtr -= 2;
+        vtx_write -= 2;
 
         [[unlikely]] if (cap == ImDrawFlags_CapSquare)
         {
             const ImVec2 n0 = normals[0];
             const ImVec2 n1 = normals[count - 1];
 
-            vtx_start[0].pos.x += n0.y * half_thickness;
-            vtx_start[0].pos.y -= n0.x * half_thickness;
-            vtx_start[1].pos.x += n0.y * half_thickness;
-            vtx_start[1].pos.y -= n0.x * half_thickness;
+            draw_list->_VtxWritePtr[ 0].pos.x += n0.y * half_thickness;
+            draw_list->_VtxWritePtr[ 0].pos.y -= n0.x * half_thickness;
+            draw_list->_VtxWritePtr[ 1].pos.x += n0.y * half_thickness;
+            draw_list->_VtxWritePtr[ 1].pos.y -= n0.x * half_thickness;
 
-            draw_list->_VtxWritePtr[-2].pos.x -= n1.y * half_thickness;
-            draw_list->_VtxWritePtr[-2].pos.y += n1.x * half_thickness;
-            draw_list->_VtxWritePtr[-1].pos.x -= n1.y * half_thickness;
-            draw_list->_VtxWritePtr[-1].pos.y += n1.x * half_thickness;
+            vtx_write[-2].pos.x -= n1.y * half_thickness;
+            vtx_write[-2].pos.y += n1.x * half_thickness;
+            vtx_write[-1].pos.x -= n1.y * half_thickness;
+            vtx_write[-1].pos.y += n1.x * half_thickness;
         }
     }
 
-    const int used_vtx_count = static_cast<int>(draw_list->_VtxWritePtr - vtx_start);
-    const int used_idx_count = static_cast<int>(draw_list->_IdxWritePtr - idx_start);
+    const int used_vtx_count = (int)(vtx_write - draw_list->_VtxWritePtr);
+    const int used_idx_count = (int)(idx_write - draw_list->_IdxWritePtr);
     const int unused_vtx_count = vtx_count - used_vtx_count;
     const int unused_idx_count = idx_count - used_idx_count;
 
     IM_ASSERT(unused_idx_count >= 0);
     IM_ASSERT(unused_vtx_count >= 0);
 
-    draw_list->PrimUnreserve(unused_idx_count, unused_vtx_count);
+    draw_list->_VtxWritePtr   = vtx_write;
+    draw_list->_IdxWritePtr   = idx_write;
+    draw_list->_VtxCurrentIdx = idx_offset;
 
-    draw_list->_VtxCurrentIdx = idx_base;
+    draw_list->PrimUnreserve(unused_idx_count, unused_vtx_count);
 
 #if 0
     [[unlikely]] if (!closed && cap == ImDrawFlags_CapRound)
@@ -655,7 +670,7 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
                 draw_list->_IdxWritePtr += 9;
 
             }
-            
+
             draw_list->_VtxWritePtr += 2;
             idx_base += 2;
         }
@@ -663,9 +678,6 @@ static void ImDrawList_Polyline_NoAA(ImDrawList* draw_list, const ImVec2* data, 
         draw_list->_VtxCurrentIdx = idx_base;
     }
 #endif
-
-#undef IM_POLYLINE_VERTEX
-#undef IM_POLYLINE_TRIANGLE
 }
 
 static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, const int count, ImU32 color_, const ImDrawFlags draw_flags, float thickness, float miter_limit)
@@ -704,11 +716,11 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
     //   - ThickButt: flat cap with extra vertices, used for discontinuity between segments
     enum JoinType { Miter, MiterClip, Bevel, Butt, ThickButt };
 
-    const bool        closed         = !!(draw_flags & ImDrawFlags_Closed) && (count > 2);
-    const ImDrawFlags join_flags     = draw_flags & ImDrawFlags_JoinMask_;
-    const ImDrawFlags cap_flags      = draw_flags & ImDrawFlags_CapMask_;
-    const ImDrawFlags join           = join_flags ? join_flags : ImDrawFlags_JoinDefault_;
-    const ImDrawFlags cap            = cap_flags ? cap_flags : ImDrawFlags_CapDefault_;
+    const bool        closed     = !!(draw_flags & ImDrawFlags_Closed) && (count > 2);
+    const ImDrawFlags join_flags = draw_flags & ImDrawFlags_JoinMask_;
+    const ImDrawFlags cap_flags  = draw_flags & ImDrawFlags_CapMask_;
+    const ImDrawFlags join       = join_flags ? join_flags : ImDrawFlags_JoinDefault_;
+    const ImDrawFlags cap        = cap_flags ? cap_flags : ImDrawFlags_CapDefault_;
 
     // Pick default join type based on join flags
     const JoinType default_join_type       = join == ImDrawFlags_JoinBevel ? Bevel : (join == ImDrawFlags_JoinMiterClip ? MiterClip : Miter);
@@ -730,55 +742,21 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
         normals = reinterpret_cast<ImVec2*>(draw_list->_Data->TempBuffer.Data);
         segments_length_sqr = reinterpret_cast<float*>(normals + segment_normal_count);
 
-#define IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i0, i1, n)              \
-        do                                                          \
-        {                                                           \
-            float dx = data[i1].x - data[i0].x;                     \
-            float dy = data[i1].y - data[i0].y;                     \
-            float d2 = dx * dx + dy * dy;                           \
-            if (d2 > 0.0f)                                          \
-            {                                                       \
-                float inv_len = ImRsqrt(d2);                        \
-                dx *= inv_len;                                      \
-                dy *= inv_len;                                      \
-            }                                                       \
-            normals[i0].x =  dy;                                    \
-            normals[i0].y = -dx;                                    \
-            segments_length_sqr[i1] = d2;                           \
-        } while (false)
+        for (int i = 0; i < count - 1; ++i)
+            IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i, i + 1);
 
-            for (int i = 0; i < count - 1; ++i)
-                IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(i, i + 1, normals[i]);
+        if (closed)
+        {
+            IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(count - 1, 0);
+        }
+        else
+        {
+            normals[count - 1] = normals[count - 2];
+            segments_length_sqr[0] = segments_length_sqr[count - 1];
+        }
 
-            if (closed)
-            {
-                IM_POLYLINE_COMPUTE_SEGMENT_DETAILS(count - 1, 0, normals[count - 1]);
-            }
-            else
-            {
-                normals[count - 1] = normals[count - 2];
-                segments_length_sqr[0] = segments_length_sqr[count - 1];
-            }
-
-            segments_length_sqr[count] = segments_length_sqr[0];
-
-#undef IM_POLYLINE_COMPUTE_SEGMENT_DETAILS
+        segments_length_sqr[count] = segments_length_sqr[0];
      }
-
-#define IM_POLYLINE_VERTEX(N, X, Y, C)                          \
-    {                                                           \
-        draw_list->_VtxWritePtr[N].pos.x = X;                   \
-        draw_list->_VtxWritePtr[N].pos.y = Y;                   \
-        draw_list->_VtxWritePtr[N].uv    = uv;                  \
-        draw_list->_VtxWritePtr[N].col   = C;                   \
-    }
-
-#define IM_POLYLINE_TRIANGLE(N, A, B, C)                        \
-    {                                                           \
-        draw_list->_IdxWritePtr[N * 3 + 0] = idx_base + A;      \
-        draw_list->_IdxWritePtr[N * 3 + 1] = idx_base + B;      \
-        draw_list->_IdxWritePtr[N * 3 + 2] = idx_base + C;      \
-    }
 
     // Most dimensions are squares of the actual values, fit nicely with trigonometric identities
     const float half_thickness        = thickness * 0.5f;
@@ -791,19 +769,19 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
 
     const float miter_angle_limit = -0.9999619f; // cos(179.5)
 
-    const float miter_clip_projection_tollerance = 0.001f; // 
+    const float miter_clip_projection_tollerance = 0.001f; //
 
     // Reserve vertices and indices for worst case scenario
     // Unused vertices and indices will be released after the loop
-    const auto uv        = draw_list->_Data->TexUvWhitePixel;
-    const auto vtx_count = (count * 13 + 4);     // top 13 vertices per join, 4 vertices per butt cap
-    const auto idx_count = (count * 15 + 4) * 3; // top 15 triangles per join, 4 triangles for square cap
-    auto       idx_base  = draw_list->_VtxCurrentIdx;
+    const ImVec2 uv         = draw_list->_Data->TexUvWhitePixel;
+    const int    vtx_count  = (count * 13 + 4);     // top 13 vertices per join, 4 vertices per butt cap
+    const int    idx_count  = (count * 15 + 4) * 3; // top 15 triangles per join, 4 triangles for square cap
+    unsigned int idx_offset = draw_list->_VtxCurrentIdx;
 
     draw_list->PrimReserve(idx_count, vtx_count);
 
-    const auto vtx_start = draw_list->_VtxWritePtr;
-    const auto idx_start = draw_list->_IdxWritePtr;
+    ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
+    ImDrawIdx*  idx_write = draw_list->_IdxWritePtr;
 
     // Last two vertices in the vertex buffer are reserved to next segment to build upon
     // This is true for all segments.
@@ -817,7 +795,7 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
     //   |   |         |   |
     //   +---+----x----+---+
     //   0   1    p0   2   3
-    // 
+    //
     // 4 vertices
     //
     IM_POLYLINE_VERTEX(0, p0.x - n0.x * half_fringe_thickness,  p0.y - n0.y * half_fringe_thickness, color_border);
@@ -825,9 +803,9 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
     IM_POLYLINE_VERTEX(2, p0.x + n0.x *        half_thickness,  p0.y + n0.y *        half_thickness, color);
     IM_POLYLINE_VERTEX(3, p0.x + n0.x * half_fringe_thickness,  p0.y + n0.y * half_fringe_thickness, color_border);
 
-    draw_list->_VtxWritePtr += 4;
+    vtx_write += 4;
 
-    int last_join_type = Butt;
+    JoinType last_join_type = Butt;
 
     for (int i = closed ? 0 : 1; i < count; ++i)
     {
@@ -892,16 +870,16 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
             //
             // Miter join is skew to the left or right, order of vertices does
             // not change.
-            // 
+            //
             //   0
-            //   +   
+            //   +
             //   |'-_ 1
             //   |  .+-_
             //   |  .|  '-x
             //   | . |     '-_  2
             //   | . |        .+
             //   | . |      .  |'-_ 3
-            //   |.  |    .    |  .+  
+            //   |.  |    .    |  .+
             //   |.  |  .      | . |
             //   +~ ~+~ ~ ~ ~ ~+ ~ +
             //  -4  -3        -2  -1
@@ -925,7 +903,7 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
             //   |   |         |   |
             //   +---+----x----+---+
             //   3   4    p1   5   6
-            // 
+            //
             //   0   1    p0   2   3
             //   +---+----x----+---+
             //   |   |         |   |
@@ -961,7 +939,7 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
 
             //
             // Left turn                            Right turn
-            //                                      
+            //
             //              5                                  2
             //               +                                +
             //              /.\                              / \
@@ -1065,35 +1043,35 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
             // there are 4 vertices in the previous segment, to make indices less confusing
             // we shift base do 0 will be first vertex of ThickButt, later we undo that
             // and segments will be connected properly
-            idx_base += 4;
+            idx_offset += 4;
 
             [[likely]] if (preferred_join_type == Miter)
             {
                 //
                 // Miter join between two discontinuous segments
-                // 
+                //
                 // Left turn                                     Right turn
-                // 
-                //             ~                      6      |      6                      ~               
-                //           ~ ~ --+-------------------+     |     +-------------------+-- ~ ~             
-                //             ~ 12|'''....          .'|     |     |'.'''''....        |9  ~               
-                //             ~   |       ''''... .' '|     |     |  '.  5    ''''....|   ~               
-                //           ~ ~ --+-------------+ 5 ' |     |     |    '+-------------+-- ~ ~             
-                //             ~ 11|           .'|   ' |     |     |    '|           .'|10 ~               
-                //       <     ~   |         .'  |  '  |     |     |   ' |         .'  |   ~     <         
-                //     to next ~   |       .'    |  '  |     |     |  '  |       .'    |   ~ to next       
-                //             ~   |     .'      | '   |     |     |  '  |     .'      |   ~               
-                //             ~   |   .'        | '   |     |     | '   |   .'        |   ~               
-                //             ~   | .'          |'    |     |     |'    | .'          |   ~               
-                //   +-----+-------+-------------+-----+     |     +-----+-------------+-------+-----+     
-                //  0|    1|   ~  4|            2|    3|     |     |0    |1            |4  ~   |2    |3    
-                // ~ ~ ~~~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~~~ ~ ~   
-                //   |     |   ~   |             |     |     |     |     |             |   ~   |     |     
-                //   ~     ~ ~ ~ --+             ~     ~     |     ~     ~             +-- ~ ~ ~     ~     
-                //             ~ 10|        /\               |               \/        |11 ~               
-                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap     
-                //           ~ ~ --+                         |                         +-- ~ ~             
-                //             ~  9                          |                          12 ~               
+                //
+                //             ~                      6      |      6                      ~
+                //           ~ ~ --+-------------------+     |     +-------------------+-- ~ ~
+                //             ~ 12|'''....          .'|     |     |'.'''''....        |9  ~
+                //             ~   |       ''''... .' '|     |     |  '.  5    ''''....|   ~
+                //           ~ ~ --+-------------+ 5 ' |     |     |    '+-------------+-- ~ ~
+                //             ~ 11|           .'|   ' |     |     |    '|           .'|10 ~
+                //       <     ~   |         .'  |  '  |     |     |   ' |         .'  |   ~     <
+                //     to next ~   |       .'    |  '  |     |     |  '  |       .'    |   ~ to next
+                //             ~   |     .'      | '   |     |     |  '  |     .'      |   ~
+                //             ~   |   .'        | '   |     |     | '   |   .'        |   ~
+                //             ~   | .'          |'    |     |     |'    | .'          |   ~
+                //   +-----+-------+-------------+-----+     |     +-----+-------------+-------+-----+
+                //  0|    1|   ~  4|            2|    3|     |     |0    |1            |4  ~   |2    |3
+                // ~ ~ ~~~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~~~ ~ ~
+                //   |     |   ~   |             |     |     |     |     |             |   ~   |     |
+                //   ~     ~ ~ ~ --+             ~     ~     |     ~     ~             +-- ~ ~ ~     ~
+                //             ~ 10|        /\               |               \/        |11 ~
+                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap
+                //           ~ ~ --+                         |                         +-- ~ ~
+                //             ~  9                          |                          12 ~
                 //
                 // 3 of 5 extra vertices allocated
                 // 6 extra triangles (12 total per join)
@@ -1107,52 +1085,54 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
 
                 if (sin_theta < 0.0f)
                 {
-                    IM_POLYLINE_TRIANGLE(0,  4,  2,  5);
-                    IM_POLYLINE_TRIANGLE(1,  4,  5, 11);
-                    IM_POLYLINE_TRIANGLE(2,  2,  6,  5);
-                    IM_POLYLINE_TRIANGLE(3,  2,  3,  6);
-                    IM_POLYLINE_TRIANGLE(4,  5, 12, 11);
-                    IM_POLYLINE_TRIANGLE(5,  5,  6, 12);
+                    IM_POLYLINE_TRIANGLE_BEGIN();
+                    IM_POLYLINE_TRIANGLE(4,  2,  5);
+                    IM_POLYLINE_TRIANGLE(4,  5, 11);
+                    IM_POLYLINE_TRIANGLE(2,  6,  5);
+                    IM_POLYLINE_TRIANGLE(2,  3,  6);
+                    IM_POLYLINE_TRIANGLE(5, 12, 11);
+                    IM_POLYLINE_TRIANGLE(5,  6, 12);
+                    IM_POLYLINE_TRIANGLE_END();
                 }
                 else
                 {
-                    IM_POLYLINE_TRIANGLE(0,  0,  5,  6);
-                    IM_POLYLINE_TRIANGLE(1,  0,  1,  5);
-                    IM_POLYLINE_TRIANGLE(2,  1, 10,  5);
-                    IM_POLYLINE_TRIANGLE(3,  1,  4, 10);
-                    IM_POLYLINE_TRIANGLE(4, 10,  6,  5);
-                    IM_POLYLINE_TRIANGLE(5, 10,  9,  6);
+                    IM_POLYLINE_TRIANGLE_BEGIN();
+                    IM_POLYLINE_TRIANGLE(0,  5,  6);
+                    IM_POLYLINE_TRIANGLE( 0,  1,  5);
+                    IM_POLYLINE_TRIANGLE( 1, 10,  5);
+                    IM_POLYLINE_TRIANGLE( 1,  4, 10);
+                    IM_POLYLINE_TRIANGLE(10,  6,  5);
+                    IM_POLYLINE_TRIANGLE(10,  9,  6);
+                    IM_POLYLINE_TRIANGLE_END();
                 }
-
-                draw_list->_IdxWritePtr += 18;
             }
             else [[unlikely]] if (preferred_join_type == Bevel || preferred_join_type == MiterClip)
             {
                 //
                 // Bevel join between two discontinuous segments
-                // 
+                //
                 // Left turn                                     Right turn
-                // 
-                //             ~            7                |                7            ~               
-                //           ~ ~ --+---------+               |               +---------+-- ~ ~             
-                //             ~ 12|''..     :'.             |             .':''...    |9  ~               
-                //             ~   |    ''..: . '.           |           .' 8 :    ''..|   ~               
-                //           ~ ~ --+--------+8 .  '.         |         .'  .. +--------+-- ~ ~             
-                //             ~ 11|       ' '. .   '.       |       .'..'' .' '       |10 ~               
-                //       <     ~   |      '    '.. ...'+ 6   |   6 +'...  .'    '      |   ~     <         
-                //     to next ~   |    .'    ...+'  .'|     |     |    '+...    '.    |   ~ to next       
-                //             ~   |   '  ..''  5|  .' |     |     |   .'|5  ''..  '   |   ~               
-                //             ~   |  '.''       | .'  |     |     | .'  |       ''.'  |   ~               
-                //             ~   |.''          |.'   |     |     |.'   |          ''.|   ~               
-                //   +-----+-------+-------------+-----+     |     +-----+-------------+-------+-----+     
-                //  0|    1|   ~  4|            2|    3|     |     |0    |1            |4  ~   |2    |3    
-                // ~ ~ ~~~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~~~ ~ ~   
-                //   |     |   ~   |             |     |     |     |     |             |   ~   |     |     
-                //   ~     ~ ~ ~ --+             ~     ~     |     ~     ~             +-- ~ ~ ~     ~     
-                //             ~ 10|        /\               |               \/        |11 ~               
-                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap     
-                //           ~ ~ --+                         |                         +-- ~ ~             
-                //             ~  9                          |                          12 ~               
+                //
+                //             ~            7                |                7            ~
+                //           ~ ~ --+---------+               |               +---------+-- ~ ~
+                //             ~ 12|''..     :'.             |             .':''...    |9  ~
+                //             ~   |    ''..: . '.           |           .' 8 :    ''..|   ~
+                //           ~ ~ --+--------+8 .  '.         |         .'  .. +--------+-- ~ ~
+                //             ~ 11|       ' '. .   '.       |       .'..'' .' '       |10 ~
+                //       <     ~   |      '    '.. ...'+ 6   |   6 +'...  .'    '      |   ~     <
+                //     to next ~   |    .'    ...+'  .'|     |     |    '+...    '.    |   ~ to next
+                //             ~   |   '  ..''  5|  .' |     |     |   .'|5  ''..  '   |   ~
+                //             ~   |  '.''       | .'  |     |     | .'  |       ''.'  |   ~
+                //             ~   |.''          |.'   |     |     |.'   |          ''.|   ~
+                //   +-----+-------+-------------+-----+     |     +-----+-------------+-------+-----+
+                //  0|    1|   ~  4|            2|    3|     |     |0    |1            |4  ~   |2    |3
+                // ~ ~ ~~~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~   |   ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~~~ ~ ~
+                //   |     |   ~   |             |     |     |     |     |             |   ~   |     |
+                //   ~     ~ ~ ~ --+             ~     ~     |     ~     ~             +-- ~ ~ ~     ~
+                //             ~ 10|        /\               |               \/        |11 ~
+                //   overlap   ~   |   from previous         |         from previous   |   ~   overlap
+                //           ~ ~ --+                         |                         +-- ~ ~
+                //             ~  9                          |                          12 ~
                 //
                 // 5 of 5 extra vertices allocated
                 // 9 extra triangles (15 total per join)
@@ -1179,26 +1159,25 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
                     if (sin_theta < 0.0f)
                     {
                         // Left turn, for full bevel we skip collapsed triangles (same vertices: 5 == 2, 8 == 11)
-
-                        IM_POLYLINE_TRIANGLE(0,  4, 2, 11);
-                        IM_POLYLINE_TRIANGLE(1,  2, 3,  6);
-                        IM_POLYLINE_TRIANGLE(2, 11, 7, 12);
-                        IM_POLYLINE_TRIANGLE(3,  2, 6,  7);
-                        IM_POLYLINE_TRIANGLE(4,  2, 7, 11);
-
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE( 4, 2, 11);
+                        IM_POLYLINE_TRIANGLE( 2, 3,  6);
+                        IM_POLYLINE_TRIANGLE(11, 7, 12);
+                        IM_POLYLINE_TRIANGLE( 2, 7, 11);
+                        IM_POLYLINE_TRIANGLE( 2, 6,  7);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
                     else
                     {
                         // Right turn, for full bevel we skip collapsed triangles (same vertices: 5 == 1, 8 == 10)
-
-                        IM_POLYLINE_TRIANGLE(0,  4, 10, 1);
-                        IM_POLYLINE_TRIANGLE(1,  0,  1, 6);
-                        IM_POLYLINE_TRIANGLE(2, 10,  9, 7);
-                        IM_POLYLINE_TRIANGLE(3, 10,  7, 6);
-                        IM_POLYLINE_TRIANGLE(4, 10,  6, 1);
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE( 4, 10, 1);
+                        IM_POLYLINE_TRIANGLE( 0,  1, 6);
+                        IM_POLYLINE_TRIANGLE(10,  9, 7);
+                        IM_POLYLINE_TRIANGLE(10,  7, 6);
+                        IM_POLYLINE_TRIANGLE(10,  6, 1);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
-                        
-                    draw_list->_IdxWritePtr += 15;
                 }
                 else
                 {
@@ -1235,42 +1214,44 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
 
                     if (sin_theta < 0.0f)
                     {
-                        IM_POLYLINE_TRIANGLE(0,  4, 2,  5);
-                        IM_POLYLINE_TRIANGLE(1,  4, 5,  8);
-                        IM_POLYLINE_TRIANGLE(2,  4, 8, 11);
-                        IM_POLYLINE_TRIANGLE(3,  2, 6,  5);
-                        IM_POLYLINE_TRIANGLE(4,  2, 3,  6);
-                        IM_POLYLINE_TRIANGLE(5, 11, 8, 12);
-                        IM_POLYLINE_TRIANGLE(6,  8, 7, 12);
-                        IM_POLYLINE_TRIANGLE(7,  5, 7,  8);
-                        IM_POLYLINE_TRIANGLE(8,  5, 6,  7);
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE( 4, 2,  5);
+                        IM_POLYLINE_TRIANGLE( 4, 5,  8);
+                        IM_POLYLINE_TRIANGLE( 4, 8, 11);
+                        IM_POLYLINE_TRIANGLE( 2, 6,  5);
+                        IM_POLYLINE_TRIANGLE( 2, 3,  6);
+                        IM_POLYLINE_TRIANGLE(11, 8, 12);
+                        IM_POLYLINE_TRIANGLE( 8, 7, 12);
+                        IM_POLYLINE_TRIANGLE( 5, 7,  8);
+                        IM_POLYLINE_TRIANGLE( 5, 6,  7);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
                     else
                     {
-                        IM_POLYLINE_TRIANGLE(0,  4,  5, 1);
-                        IM_POLYLINE_TRIANGLE(1,  4,  8, 5);
-                        IM_POLYLINE_TRIANGLE(2,  4, 10, 8);
-                        IM_POLYLINE_TRIANGLE(3,  0,  5, 6);
-                        IM_POLYLINE_TRIANGLE(4,  0,  1, 5);
-                        IM_POLYLINE_TRIANGLE(5, 10,  9, 7);
-                        IM_POLYLINE_TRIANGLE(6, 10,  7, 8);
-                        IM_POLYLINE_TRIANGLE(7,  8,  6, 5);
-                        IM_POLYLINE_TRIANGLE(8,  8,  7, 6);
+                        IM_POLYLINE_TRIANGLE_BEGIN();
+                        IM_POLYLINE_TRIANGLE( 4,  5, 1);
+                        IM_POLYLINE_TRIANGLE( 4,  8, 5);
+                        IM_POLYLINE_TRIANGLE( 4, 10, 8);
+                        IM_POLYLINE_TRIANGLE( 0,  5, 6);
+                        IM_POLYLINE_TRIANGLE( 0,  1, 5);
+                        IM_POLYLINE_TRIANGLE(10,  9, 7);
+                        IM_POLYLINE_TRIANGLE(10,  7, 8);
+                        IM_POLYLINE_TRIANGLE( 8,  6, 5);
+                        IM_POLYLINE_TRIANGLE( 8,  7, 6);
+                        IM_POLYLINE_TRIANGLE_END();
                     }
-
-                    draw_list->_IdxWritePtr += 27;
                 }
             }
 
             // Restore index base (see commend next to 'idx_base += 4' above)
-            idx_base -= 4;
+            idx_offset -= 4;
         }
 
         [[unlikely]] if (join_type == Bevel || join_type == MiterClip)
         {
             //
             // Left turn                            Right turn
-            // 
+            //
             //                9                 |               6
             //                 +                |              +
             //                /.\               |             / \
@@ -1293,30 +1274,32 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
 
             if (sin_theta < 0.0f)
             {
-                IM_POLYLINE_TRIANGLE( 0, 0, 6, 7);
-                IM_POLYLINE_TRIANGLE( 1, 0, 1, 7);
-                IM_POLYLINE_TRIANGLE( 2, 1, 4, 7);
-                IM_POLYLINE_TRIANGLE( 3, 1, 2, 4);
-                IM_POLYLINE_TRIANGLE( 4, 2, 5, 4);
-                IM_POLYLINE_TRIANGLE( 5, 2, 3, 5);
-                IM_POLYLINE_TRIANGLE( 6, 4, 8, 7);
-                IM_POLYLINE_TRIANGLE( 7, 4, 9, 8);
-                IM_POLYLINE_TRIANGLE( 8, 4, 5, 9);
+                IM_POLYLINE_TRIANGLE_BEGIN();
+                IM_POLYLINE_TRIANGLE(0, 6, 7);
+                IM_POLYLINE_TRIANGLE(0, 1, 7);
+                IM_POLYLINE_TRIANGLE(1, 4, 7);
+                IM_POLYLINE_TRIANGLE(1, 2, 4);
+                IM_POLYLINE_TRIANGLE(2, 5, 4);
+                IM_POLYLINE_TRIANGLE(2, 3, 5);
+                IM_POLYLINE_TRIANGLE(4, 8, 7);
+                IM_POLYLINE_TRIANGLE(4, 9, 8);
+                IM_POLYLINE_TRIANGLE(4, 5, 9);
+                IM_POLYLINE_TRIANGLE_END();
             }
             else
             {
-                IM_POLYLINE_TRIANGLE( 0, 0, 5, 4);
-                IM_POLYLINE_TRIANGLE( 1, 0, 1, 5);
-                IM_POLYLINE_TRIANGLE( 2, 1, 8, 5);
-                IM_POLYLINE_TRIANGLE( 3, 1, 2, 8);
-                IM_POLYLINE_TRIANGLE( 4, 2, 9, 8);
-                IM_POLYLINE_TRIANGLE( 5, 2, 3, 9);
-                IM_POLYLINE_TRIANGLE( 6, 4, 7, 6);
-                IM_POLYLINE_TRIANGLE( 7, 4, 5, 7);
-                IM_POLYLINE_TRIANGLE( 8, 5, 8, 7);
+                IM_POLYLINE_TRIANGLE_BEGIN();
+                IM_POLYLINE_TRIANGLE(0, 5, 4);
+                IM_POLYLINE_TRIANGLE(0, 1, 5);
+                IM_POLYLINE_TRIANGLE(1, 8, 5);
+                IM_POLYLINE_TRIANGLE(1, 2, 8);
+                IM_POLYLINE_TRIANGLE(2, 9, 8);
+                IM_POLYLINE_TRIANGLE(2, 3, 9);
+                IM_POLYLINE_TRIANGLE(4, 7, 6);
+                IM_POLYLINE_TRIANGLE(4, 5, 7);
+                IM_POLYLINE_TRIANGLE(5, 8, 7);
+                IM_POLYLINE_TRIANGLE_END();
             }
-
-            draw_list->_IdxWritePtr += 27;
         }
         else
         {
@@ -1337,18 +1320,19 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
             //
             // 6 triangles
             //
-            IM_POLYLINE_TRIANGLE(0, 0, 5, 4);
-            IM_POLYLINE_TRIANGLE(1, 0, 1, 5);
-            IM_POLYLINE_TRIANGLE(2, 1, 6, 5);
-            IM_POLYLINE_TRIANGLE(3, 1, 2, 6);
-            IM_POLYLINE_TRIANGLE(4, 2, 7, 6);
-            IM_POLYLINE_TRIANGLE(5, 2, 3, 7);
 
-            draw_list->_IdxWritePtr += 18;
+            IM_POLYLINE_TRIANGLE_BEGIN();
+            IM_POLYLINE_TRIANGLE(0, 5, 4);
+            IM_POLYLINE_TRIANGLE(0, 1, 5);
+            IM_POLYLINE_TRIANGLE(1, 6, 5);
+            IM_POLYLINE_TRIANGLE(1, 2, 6);
+            IM_POLYLINE_TRIANGLE(2, 7, 6);
+            IM_POLYLINE_TRIANGLE(2, 3, 7);
+            IM_POLYLINE_TRIANGLE_END();
         }
 
-        draw_list->_VtxWritePtr += new_vtx_count;
-        idx_base += new_vtx_count;
+        vtx_write += new_vtx_count;
+        idx_offset += new_vtx_count;
 
         p0 = p1;
         n0 = n1;
@@ -1358,123 +1342,75 @@ static void ImDrawList_Polyline_AA(ImDrawList* draw_list, const ImVec2* data, co
 
     if (closed)
     {
-        idx_base += 4;
+        idx_offset += 4;
 
-        vtx_start[0].pos = draw_list->_VtxWritePtr[-4].pos;
-        vtx_start[1].pos = draw_list->_VtxWritePtr[-3].pos;
-        vtx_start[2].pos = draw_list->_VtxWritePtr[-2].pos;
-        vtx_start[3].pos = draw_list->_VtxWritePtr[-1].pos;
+        draw_list->_VtxWritePtr[0].pos = vtx_write[-4].pos;
+        draw_list->_VtxWritePtr[1].pos = vtx_write[-3].pos;
+        draw_list->_VtxWritePtr[2].pos = vtx_write[-2].pos;
+        draw_list->_VtxWritePtr[3].pos = vtx_write[-1].pos;
     }
     else
     {
-        draw_list->_VtxWritePtr -= 4;
+        vtx_write -= 4;
 
         [[unlikely]] if (cap == ImDrawFlags_CapSquare)
         {
             const ImVec2 n0 = normals[0];
             const ImVec2 n1 = normals[count - 1];
 
-            vtx_start[0].pos.x                += n0.y * half_fringe_thickness;
-            vtx_start[0].pos.y                -= n0.x * half_fringe_thickness;
-            vtx_start[1].pos.x                += n0.y * half_thickness;
-            vtx_start[1].pos.y                -= n0.x * half_thickness;
-            vtx_start[2].pos.x                += n0.y * half_thickness;
-            vtx_start[2].pos.y                -= n0.x * half_thickness;
-            vtx_start[3].pos.x                += n0.y * half_fringe_thickness;
-            vtx_start[3].pos.y                -= n0.x * half_fringe_thickness;
+            draw_list->_VtxWritePtr[0].pos.x += n0.y * half_fringe_thickness;
+            draw_list->_VtxWritePtr[0].pos.y -= n0.x * half_fringe_thickness;
+            draw_list->_VtxWritePtr[1].pos.x += n0.y * half_thickness;
+            draw_list->_VtxWritePtr[1].pos.y -= n0.x * half_thickness;
+            draw_list->_VtxWritePtr[2].pos.x += n0.y * half_thickness;
+            draw_list->_VtxWritePtr[2].pos.y -= n0.x * half_thickness;
+            draw_list->_VtxWritePtr[3].pos.x += n0.y * half_fringe_thickness;
+            draw_list->_VtxWritePtr[3].pos.y -= n0.x * half_fringe_thickness;
 
-            draw_list->_VtxWritePtr[-4].pos.x -= n1.y * half_fringe_thickness;
-            draw_list->_VtxWritePtr[-4].pos.y += n1.x * half_fringe_thickness;
-            draw_list->_VtxWritePtr[-3].pos.x -= n1.y * half_thickness;
-            draw_list->_VtxWritePtr[-3].pos.y += n1.x * half_thickness;
-            draw_list->_VtxWritePtr[-2].pos.x -= n1.y * half_thickness;
-            draw_list->_VtxWritePtr[-2].pos.y += n1.x * half_thickness;
-            draw_list->_VtxWritePtr[-1].pos.x -= n1.y * half_fringe_thickness;
-            draw_list->_VtxWritePtr[-1].pos.y += n1.x * half_fringe_thickness;
+            vtx_write[-4].pos.x -= n1.y * half_fringe_thickness;
+            vtx_write[-4].pos.y += n1.x * half_fringe_thickness;
+            vtx_write[-3].pos.x -= n1.y * half_thickness;
+            vtx_write[-3].pos.y += n1.x * half_thickness;
+            vtx_write[-2].pos.x -= n1.y * half_thickness;
+            vtx_write[-2].pos.y += n1.x * half_thickness;
+            vtx_write[-1].pos.x -= n1.y * half_fringe_thickness;
+            vtx_write[-1].pos.y += n1.x * half_fringe_thickness;
 
-            IM_POLYLINE_TRIANGLE(0, -4, -3, -1);
-            IM_POLYLINE_TRIANGLE(1, -3, -2, -1);
+            const unsigned int idx_base = idx_offset;
+            const unsigned int zero_index_offset = (unsigned int)(idx_offset - draw_list->_VtxCurrentIdx);
 
-            const unsigned int zero_index_offset = static_cast<unsigned int>(idx_base - draw_list->_VtxCurrentIdx);
+            IM_POLYLINE_TRIANGLE(-4, -3, -1);
+            IM_POLYLINE_TRIANGLE(-3, -2, -1);
 
-            IM_POLYLINE_TRIANGLE(2, 0 - zero_index_offset, 3 - zero_index_offset, 1 - zero_index_offset);
-            IM_POLYLINE_TRIANGLE(3, 3 - zero_index_offset, 2 - zero_index_offset, 1 - zero_index_offset);
-
-            draw_list->_IdxWritePtr += 12;
+            IM_POLYLINE_TRIANGLE(0 - zero_index_offset, 3 - zero_index_offset, 1 - zero_index_offset);
+            IM_POLYLINE_TRIANGLE(3 - zero_index_offset, 2 - zero_index_offset, 1 - zero_index_offset);
         }
     }
 
-    const int used_vtx_count = static_cast<int>(draw_list->_VtxWritePtr - vtx_start);
-    const int used_idx_count = static_cast<int>(draw_list->_IdxWritePtr - idx_start);
+    const int used_vtx_count = (int)(vtx_write - draw_list->_VtxWritePtr);
+    const int used_idx_count = (int)(idx_write - draw_list->_IdxWritePtr);
     const int unused_vtx_count = vtx_count - used_vtx_count;
     const int unused_idx_count = idx_count - used_idx_count;
 
     IM_ASSERT(unused_idx_count >= 0);
     IM_ASSERT(unused_vtx_count >= 0);
 
+    draw_list->_VtxWritePtr   = vtx_write;
+    draw_list->_IdxWritePtr   = idx_write;
+    draw_list->_VtxCurrentIdx = idx_offset;
+
     draw_list->PrimUnreserve(unused_idx_count, unused_vtx_count);
-
-    draw_list->_VtxCurrentIdx = idx_base;
-
-#if 0
-    [[unlikely]] if (!closed && cap == ImDrawFlags_CapRound)
-    {
-        const ImVec2 p0 = data[0];
-        const ImVec2 p1 = data[count - 1];
-        const ImVec2 n0 = normals[0];
-        const ImVec2 n1 = normals[count - 1];
-
-        const auto begin_angle = ImAtan2(n0.y, n0.x);
-        const auto   end_angle = ImAtan2(n1.y, n1.x);
-
-        const auto half_thickness_to_half_fringe_thickness = half_fringe_thickness / half_thickness;
-
-        draw_list->PathClear();
-        draw_list->PathArcTo({ 0, 0 }, half_thickness, begin_angle - IM_PI, begin_angle);
-        const int begin_point_count = draw_list->_Path.Size;
-        //draw_list->PathArcTo({ 0, 0 }, half_thickness, end_angle, end_angle + IM_PI);
-        //const int end_point_count = draw_list->_Path.Size - begin_point_count;
-
-        const int vtx_count = (begin_point_count /*+ end_point_count*/) * 2;
-        const int idx_count = (begin_point_count /*+ end_point_count */- 1) * 9;
-
-        draw_list->PrimReserve(idx_count, vtx_count);
-
-        const ImVec2* arc_data = draw_list->_Path.Data;
-        for (int i = 0; i < begin_point_count; i++)
-        {
-            const ImVec2 point = *arc_data++;
-
-            IM_POLYLINE_VERTEX(0, p0.x + point.x,                                           p0.y + point.y,                                           color);
-            IM_POLYLINE_VERTEX(1, p0.x + point.x * half_thickness_to_half_fringe_thickness, p0.y + point.y * half_thickness_to_half_fringe_thickness, color_border);
-
-            [[likely]] if (i < begin_point_count - 1)
-            {
-                IM_POLYLINE_TRIANGLE(0, 0, 2, 1);
-                IM_POLYLINE_TRIANGLE(1, 1, 2, 3);
-                draw_list->_IdxWritePtr[6] = idx_base;
-                draw_list->_IdxWritePtr[7] = draw_list->_VtxCurrentIdx + begin_point_count * 2 - 2;
-                draw_list->_IdxWritePtr[8] = idx_base + 2;
-
-                draw_list->_IdxWritePtr += 9;
-
-            }
-            
-            draw_list->_VtxWritePtr += 2;
-            idx_base += 2;
-        }
-
-        draw_list->_VtxCurrentIdx = idx_base;
-    }
-#endif
-
-#undef IM_POLYLINE_VERTEX
-#undef IM_POLYLINE_TRIANGLE
 }
+
+#undef IM_POLYLINE_TRIANGLE_BEGIN
+#undef IM_POLYLINE_TRIANGLE
+#undef IM_POLYLINE_TRIANGLE_END
+#undef IM_POLYLINE_COMPUTE_SEGMENT_DETAILS
+
 
 void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, const int count, const ImU32 color, const ImDrawFlags draw_flags, float thickness, float miter_limit)
 {
-    [[unlikely]] if (count < 2 || thickness <= 0.0f) 
+    [[unlikely]] if (count < 2 || thickness <= 0.0f || !(color && IM_COL32_A_MASK))
         return;
 
     const bool antialias = !!(draw_list->Flags & ImDrawListFlags_AntiAliasedLines);
