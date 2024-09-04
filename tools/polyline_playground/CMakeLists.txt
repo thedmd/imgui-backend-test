@@ -22,6 +22,7 @@ target_include_directories(polyline_playground PRIVATE
     third_party/Clipper2Lib/include
     third_party/earcut/include
     third_party/poly2d/include
+    third_party/imgui_canvas/include
 )
 target_link_libraries(polyline_playground PRIVATE imgui d3d11 d3dcompiler)
 flatten_filters(polyline_playground)

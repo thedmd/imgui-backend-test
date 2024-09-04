@@ -21,6 +21,7 @@ enum ImDrawFlagsExtra_
     ImDrawFlags_CapMask_        = 3 << 12,
 };
 
-void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, int count, ImU32 color, ImDrawFlags draw_flags, float thickness, float miter_limit = 20.0f);
+void ImDrawList_Polyline(ImDrawList* draw_list, const ImVec2* data, int count, ImU32 color, ImDrawFlags draw_flags, float thickness, float miter_limit = 2.0f);
+void ImDrawList_Polyline_Optimized(ImDrawList* draw_list, const ImVec2* data, int count, ImU32 color, ImDrawFlags draw_flags, float thickness, float miter_limit = 2.0f);
 
 } // namespace ImGuiEx

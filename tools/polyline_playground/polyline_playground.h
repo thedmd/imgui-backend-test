@@ -5,6 +5,8 @@
 #include <imgui_canvas.h>
 
 #include "polyline_new.h"
+#include "polyline_upstream.h"
+#include "polyline_pr2964.h"
 
 #include <utility>
 #include <vector>
@@ -18,9 +20,10 @@ using std::make_unique;
 
 enum class Method
 {
-    DrawList,
-    DrawListNew,
+    Upstream,
+    PR2964,
     New,
+    NewOptimized,
     Polyline2D,
     Allegro,
     Clipper2
@@ -186,6 +189,25 @@ struct Average
     }
 };
 
+enum class NewPolylineContent : int
+{
+    Empty,
+    RectStroke,
+    RectStrokeThick,
+    RectRoundedStroke,
+    RectRoundedStrokeThick,
+    CircleStroke,
+    CircleStrokeThick,
+    TriangleStroke,
+    TriangleStrokeThick,
+    LongStroke,
+    LongStrokeThick,
+    LongJaggedStroke,
+    LongJaggedStrokeThick,
+    LineStroke,
+    LineStrokeThick,
+};
+
 struct State
 {
     using enum Method;
@@ -197,6 +219,8 @@ struct State
     bool                            ShowPoints = true;
     bool                            ShowLines = true;
     bool                            ShowMesh = false;
+
+    NewPolylineContent              NewPolyline = NewPolylineContent::Empty;
 
     Method                          Method = New;
     ImDrawFlags                     LineCap = ImDrawFlags_CapDefault_;

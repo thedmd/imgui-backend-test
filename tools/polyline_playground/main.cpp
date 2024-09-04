@@ -97,6 +97,7 @@ int main(int, char**)
     bool show_demo_window = true;
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f * 0.1f, 0.55f * 0.1f, 0.60f * 0.1f, 1.00f);
+    ImU32 last_event_id = 0;
 
     // Main loop
     bool done = false;
@@ -119,7 +120,11 @@ int main(int, char**)
         FrameMark;
 #endif
 
-        float dpi = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
+        static bool ignore_dpi = false;
+        if (ImGui::IsKeyPressed(ImGuiMod_Shift))
+            ignore_dpi = !ignore_dpi;
+
+        float dpi = ignore_dpi ? 1.0f : ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
         float snappedDpi = static_cast<float>(static_cast<int>(dpi + 0.5f));
         io.DisplayFramebufferScale.x = io.DisplayFramebufferScale.y = snappedDpi;
 
@@ -142,7 +147,49 @@ int main(int, char**)
 
         // Start the Dear ImGui frame
         ImGui_ImplDX11_NewFrame();
+
+        //if (io.WantSetMousePos)
+        //{
+        //    if (io.MousePos.x != -FLT_MAX)
+        //        io.MousePos.x /= io.DisplayFramebufferScale.x;
+        //    if (io.MousePos.y != -FLT_MAX)
+        //        io.MousePos.y /= io.DisplayFramebufferScale.y;
+        //}
+
+        auto& input_event_queue = ImGui::GetCurrentContext()->InputEventsQueue;
+
         ImGui_ImplWin32_NewFrame();
+
+        for (auto i = 0; i < input_event_queue.Size; i++)
+        {
+            auto& event = input_event_queue[i];
+
+            if (last_event_id == UINT_MAX)
+                last_event_id = 0;
+
+            if (event.EventId <= last_event_id)
+                continue;
+
+            if (event.Type == ImGuiInputEventType_MousePos)
+            {
+                if (event.MousePos.PosX != -FLT_MAX)
+                    event.MousePos.PosX = ImFloor(event.MousePos.PosX / io.DisplayFramebufferScale.x);
+                if (event.MousePos.PosY != -FLT_MAX)
+                    event.MousePos.PosY = ImFloor(event.MousePos.PosY / io.DisplayFramebufferScale.y);
+            }
+        }
+
+        if (input_event_queue.Size > 0)
+            last_event_id = input_event_queue[input_event_queue.Size - 1].EventId;
+
+        //if (io.WantSetMousePos)
+        //{
+        //    if (io.MousePos.x != -FLT_MAX)
+        //        io.MousePos.x *= io.DisplayFramebufferScale.x;
+        //    if (io.MousePos.y != -FLT_MAX)
+        //        io.MousePos.y *= io.DisplayFramebufferScale.y;
+        //}
+
         ImGui::NewFrame();
 
         // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
@@ -188,6 +235,20 @@ int main(int, char**)
 
         // Rendering
         ImGui::Render();
+
+        auto draw_data = ImGui::GetDrawData();
+
+        draw_data->ScaleClipRects(io.DisplayFramebufferScale);
+        for (int draw_list_index = 0; draw_list_index < draw_data->CmdListsCount; draw_list_index++)
+        {
+            ImDrawList* draw_list = draw_data->CmdLists[draw_list_index];
+            for (int i = 0; i < draw_list->VtxBuffer.Size; i++)
+            {
+                draw_list->VtxBuffer[i].pos.x *= io.DisplayFramebufferScale.x;
+                draw_list->VtxBuffer[i].pos.y *= io.DisplayFramebufferScale.y;
+            }
+        }
+
         const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
         g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
