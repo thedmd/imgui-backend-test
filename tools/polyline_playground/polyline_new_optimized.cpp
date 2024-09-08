@@ -11,6 +11,17 @@ namespace ImGuiEx {
 #define IM_UNLIKELY
 #endif
 
+#if defined(IMGUI_ENABLE_SSE) && !defined(_DEBUG)
+static inline float ImRsqrtSSE2Precise(float x)
+{
+    const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(x)));
+    return r * (1.5f - x * 0.5f * r * r);
+}
+#define ImRsqrtPrecise(x)                 ImRsqrtSSE2Precise(x)
+#else
+#define ImRsqrtPrecise(x)                 (1.0f / ImSqrt(x))
+#endif
+
 #ifdef IMGUI_ENABLE_SSE
 // Compute 1.0/sqrt(x) with high precision (using Newton-Raphson method converging to actually 1.0/sqrt(x))
 //static inline float  ImRsqrt(float x)            { auto inv_square = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(x))); inv_square = ImFma(ImFma(-0.5f * x * inv_square, inv_square, 0.5f), inv_square, inv_square); return inv_square; }
@@ -19,20 +30,14 @@ namespace ImGuiEx {
 //#define IM_RSQRT(x)                         (1.0f / sqrtf(x))
 //#define IM_RSQRT(x)                         ImRsqrt(x)
 #if defined(IMGUI_ENABLE_SSE) && !defined(_DEBUG)
-//#pragma optimize( "t", on)
-static inline float ImRsqrtSSE2Precise(float x)
-{
-    const float r = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(x)));
-    return r * (1.5f - x * 0.5f * r * r);
-}
 #define IM_RSQRT(x)                         ImRsqrtSSE2Precise(x)
 //#define IM_RSQRT(x)                         _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(x)))
 #else
 #define IM_RSQRT(x)                         (1.0f / ImSqrt(x))
 #endif
-#define IM_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; IM_LIKELY if (d2 > 0.0f) { float inv_len = IM_RSQRT(d2); VX *= inv_len; VY *= inv_len; } } (void)0
-#define IM_FIXNORMAL2F_MAX_INVLEN2          100.0f // 500.0f (see #4053, #3366)
-#define IM_FIXNORMAL2F(VX,VY)               { float d2 = VX*VX + VY*VY; if (d2 > 0.000001f) { float inv_len2 = 1.0f / d2; if (inv_len2 > IM_FIXNORMAL2F_MAX_INVLEN2) inv_len2 = IM_FIXNORMAL2F_MAX_INVLEN2; VX *= inv_len2; VY *= inv_len2; } } (void)0
+#define IM2_NORMALIZE2F_OVER_ZERO(VX,VY)     { float d2 = VX*VX + VY*VY; IM_LIKELY if (d2 > 0.0f) { float inv_len = IM_RSQRT(d2); VX *= inv_len; VY *= inv_len; } } (void)0
+#define IM2_FIXNORMAL2F_MAX_INVLEN2          100.0f // 500.0f (see #4053, #3366)
+#define IM2_FIXNORMAL2F(VX,VY)               { float d2 = VX*VX + VY*VY; if (d2 > 0.000001f) { float inv_len2 = 1.0f / d2; if (inv_len2 > IM2_FIXNORMAL2F_MAX_INVLEN2) inv_len2 = IM2_FIXNORMAL2F_MAX_INVLEN2; VX *= inv_len2; VY *= inv_len2; } } (void)0
 
 #define IM_PP_CONCAT(X, Y) IM__PP_CONCAT(X, Y)
 #define IM__PP_CONCAT(X, Y) X##Y
@@ -242,9 +247,10 @@ static void ImDrawList_Polyline_NoAA_Optimized(ImDrawList* draw_list, const ImVe
     const ImVec2 uv         = draw_list->_Data->TexUvWhitePixel;
     const int    vtx_count  = (count * 7 + 2);  // top 7 vertices per join, 2 vertices per butt cap
     const int    idx_count  = (count * 9) * 3 + 1;  // top 9 triangles per join, 1 index to avoid write in non-reserved memory
-    unsigned int idx_offset = draw_list->_VtxCurrentIdx;
 
     draw_list->PrimReserve(idx_count, vtx_count);
+
+    unsigned int idx_offset = draw_list->_VtxCurrentIdx;
 
     ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
     ImDrawIdx*  idx_write = draw_list->_IdxWritePtr;
@@ -403,7 +409,7 @@ static void ImDrawList_Polyline_NoAA_Optimized(ImDrawList* draw_list, const ImVe
 
             float bevel_normal_x = n01_x;
             float bevel_normal_y = n01_y;
-            IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
+            IM2_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
 
             const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
 
@@ -572,7 +578,7 @@ static void ImDrawList_Polyline_NoAA_Optimized(ImDrawList* draw_list, const ImVe
 
                 float bevel_normal_x = n01_x;
                 float bevel_normal_y = n01_y;
-                IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
+                IM2_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
 
                 IM_POLYLINE_VERTEX(4, p1.x, p1.y, uv, color);
 
@@ -810,9 +816,10 @@ static void ImDrawList_Polyline_AA_Optimized(ImDrawList* draw_list, const ImVec2
     const ImVec2 uv         = draw_list->_Data->TexUvWhitePixel;
     const int    vtx_count  = (count * 13 + 4);         // top 13 vertices per join, 4 vertices per butt cap
     const int    idx_count  = (count * 15 + 4) * 3 + 1;  // top 15 triangles per join, 4 triangles for square cap, 1 to avoid write to non-allocated memory
-    unsigned int idx_offset = draw_list->_VtxCurrentIdx;
 
     draw_list->PrimReserve(idx_count, vtx_count);
+
+    unsigned int idx_offset = draw_list->_VtxCurrentIdx;
 
     ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
     ImDrawIdx*  idx_write = draw_list->_IdxWritePtr;
@@ -965,7 +972,7 @@ static void ImDrawList_Polyline_AA_Optimized(ImDrawList* draw_list, const ImVec2
         {
             float bevel_normal_x = n01_x;
             float bevel_normal_y = n01_y;
-            IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
+            IM2_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
 
             const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
 
@@ -973,8 +980,8 @@ static void ImDrawList_Polyline_AA_Optimized(ImDrawList* draw_list, const ImVec2
             float dir_0_y = sign * (n0.y + bevel_normal_y) * 0.5f;
             float dir_1_x = sign * (n1.x + bevel_normal_x) * 0.5f;
             float dir_1_y = sign * (n1.y + bevel_normal_y) * 0.5f;
-            IM_FIXNORMAL2F(dir_0_x, dir_0_y);
-            IM_FIXNORMAL2F(dir_1_x, dir_1_y);
+            IM2_FIXNORMAL2F(dir_0_x, dir_0_y);
+            IM2_FIXNORMAL2F(dir_1_x, dir_1_y);
 
 
             //
@@ -1196,14 +1203,14 @@ static void ImDrawList_Polyline_AA_Optimized(ImDrawList* draw_list, const ImVec2
 
                 float bevel_normal_x = n01_x;
                 float bevel_normal_y = n01_y;
-                IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
+                IM2_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
 
                 float dir_0_x = sign * (n0.x + bevel_normal_x) * 0.5f;
                 float dir_0_y = sign * (n0.y + bevel_normal_y) * 0.5f;
                 float dir_1_x = sign * (n1.x + bevel_normal_x) * 0.5f;
                 float dir_1_y = sign * (n1.y + bevel_normal_y) * 0.5f;
-                IM_FIXNORMAL2F(dir_0_x, dir_0_y);
-                IM_FIXNORMAL2F(dir_1_x, dir_1_y);
+                IM2_FIXNORMAL2F(dir_0_x, dir_0_y);
+                IM2_FIXNORMAL2F(dir_1_x, dir_1_y);
 
                 IM_POLYLINE_VERTEX(4, p1.x, p1.y, uv, color);
 
@@ -1487,7 +1494,91 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
     // Compute segment normals and lengths
     ImVec2* normals = nullptr;
     float* segments_length_sqr = nullptr;
+
+#if 1
+    {
+        draw_list->_Data->TempBuffer.reserve_discard(count + (count + 1) * sizeof(ImVec2) / 2); // 'count' normals and 'count + 1' segment lengths
+        normals             = draw_list->_Data->TempBuffer.Data;
+        segments_length_sqr = (float*)(normals + count);
+
+        int i = 0;
+
+#ifdef IMGUI_ENABLE_SSE
+        IM_LIKELY if (count > 4)
+        {
+            // compute normals and squared lengths for 4 segments at once, 2 pairs of 2 segments, use single sqrt for both pairs
+            for (; i < (count - 1) / 4; i += 4)
+            {
+                __m128 diff_01  = _mm_sub_ps(_mm_loadu_ps(&data[i].x), _mm_loadu_ps(&data[i + 1].x));
+                __m128 dxy2_01  = _mm_mul_ps(diff_01, diff_01);
+                __m128 diff_23  = _mm_sub_ps(_mm_loadu_ps(&data[i + 2].x), _mm_loadu_ps(&data[i + 3].x));
+                __m128 dxy2_23  = _mm_mul_ps(diff_23, diff_23);
+                __m128 d2_01    = _mm_add_ps(_mm_shuffle_ps(dxy2_01, dxy2_01, _MM_SHUFFLE(2, 0, 2, 0)), _mm_shuffle_ps(dxy2_01, dxy2_01, _MM_SHUFFLE(3, 1, 3, 1)));
+                __m128 d2_23    = _mm_add_ps(_mm_shuffle_ps(dxy2_23, dxy2_23, _MM_SHUFFLE(2, 0, 2, 0)), _mm_shuffle_ps(dxy2_23, dxy2_23, _MM_SHUFFLE(3, 1, 3, 1)));
+                __m128 roots    = _mm_sqrt_ps(_mm_shuffle_ps(d2_01, d2_23, _MM_SHUFFLE(1, 0, 1, 0)));
+                __m128 dir_01   = _mm_and_ps(_mm_div_ps(diff_01, _mm_shuffle_ps(roots, roots, _MM_SHUFFLE(1, 1, 0, 0))), _mm_cmpgt_ps(_mm_shuffle_ps(d2_01, d2_01, _MM_SHUFFLE(1, 1, 0, 0)), _mm_set1_ps(0.0f)));
+                __m128 dir_23   = _mm_and_ps(_mm_div_ps(diff_23, _mm_shuffle_ps(roots, roots, _MM_SHUFFLE(3, 3, 2, 2))), _mm_cmpgt_ps(_mm_shuffle_ps(d2_23, d2_23, _MM_SHUFFLE(1, 1, 0, 0)), _mm_set1_ps(0.0f)));
+                _mm_storeu_ps(&normals[i    ].x, _mm_mul_ps(_mm_shuffle_ps(dir_01, dir_01, _MM_SHUFFLE(2, 3, 0, 1)), _mm_set_ps(1.0f, -1.0f, 1.0f, -1.0f)));
+                _mm_storeu_ps(&normals[i + 2].x, _mm_mul_ps(_mm_shuffle_ps(dir_01, dir_01, _MM_SHUFFLE(2, 3, 0, 1)), _mm_set_ps(1.0f, -1.0f, 1.0f, -1.0f)));
+                _mm_storeu_ps(&segments_length_sqr[i + 1], _mm_shuffle_ps(d2_01, d2_23, _MM_SHUFFLE(1, 0, 1, 0)));
+            }
+        }
+
+        IM_LIKELY if (count > 2)
+        {
+            // compute normals and squared lengths for 2 segments at once
+            for (; i < (count - 1) / 2; i += 2)
+            {
+                __m128 diff = _mm_sub_ps(_mm_loadu_ps(&data[i].x), _mm_loadu_ps(&data[i + 1].x));
+                __m128 dxy2 = _mm_mul_ps(diff, diff);
+                __m128 d2   = _mm_add_ps(_mm_shuffle_ps(dxy2, dxy2, _MM_SHUFFLE(2, 0, 2, 0)), _mm_shuffle_ps(dxy2, dxy2, _MM_SHUFFLE(3, 1, 3, 1)));
+                __m128 roots = _mm_sqrt_ps(d2);
+                __m128 dir   = _mm_and_ps(_mm_div_ps(diff, _mm_shuffle_ps(roots, roots, _MM_SHUFFLE(1, 1, 0, 0))), _mm_cmpgt_ps(_mm_shuffle_ps(d2, d2, _MM_SHUFFLE(1, 1, 0, 0)), _mm_set1_ps(0.0f)));
+                _mm_storeu_ps(&normals[i].x, _mm_mul_ps(_mm_shuffle_ps(dir, dir, _MM_SHUFFLE(2, 3, 0, 1)), _mm_set_ps(1.0f, -1.0f, 1.0f, -1.0f)));
+                _mm_storeu_ps(&segments_length_sqr[i + 1], d2);
+            }
+        }
+#endif
+
+#define IM_POLYLINE_COMPUTE_NORMALS_AND_SEGMENTS_SQUARE_LENGTHS(i0, i1, normal_out, segments_length_sqr_out)    \
+        {                                                                                                       \
+            float dx = data[i0].x - data[i1].x;                                                                 \
+            float dy = data[i0].y - data[i1].y;                                                                 \
+            float d2 = dx * dx + dy * dy;                                                                       \
+            IM_LIKELY if (d2 > 0)                                                                               \
+            {                                                                                                   \
+                float inv_length = ImRsqrtPrecise(d2);                                                          \
+                normal_out.x = -dy * inv_length;                                                                \
+                normal_out.y =  dx * inv_length;                                                                \
+            }                                                                                                   \
+            else                                                                                                \
+            {                                                                                                   \
+                normal_out.x = 0.0f;                                                                            \
+                normal_out.y = 0.0f;                                                                            \
+            }                                                                                                   \
+            segments_length_sqr_out = d2;                                                                       \
+        }
+
+        for (; i < count - 1; ++i)
+            IM_POLYLINE_COMPUTE_NORMALS_AND_SEGMENTS_SQUARE_LENGTHS(i, i + 1, normals[i], segments_length_sqr[i + 1]);
+
+        if (closed)
+        {
+            IM_POLYLINE_COMPUTE_NORMALS_AND_SEGMENTS_SQUARE_LENGTHS(count - 1, 0, normals[count - 1], segments_length_sqr[0]);
+        }
+        else
+        {
+            normals[count - 1]     = normals[count - 2];
+            segments_length_sqr[0] = segments_length_sqr[count - 1];
+        }
+
+        segments_length_sqr[count] = segments_length_sqr[0];
+
+#undef IM_POLYLINE_COMPUTE_NORMALS_AND_SEGMENTS_SQUARE_LENGTHS
+    }
+#else
     IM_POLYLINE_COMPUTE_NORMALS_AND_LENGTHS(normals, segments_length_sqr);
+#endif
 
     // Most dimensions are squares of the actual values, fit nicely with trigonometric identities
     const float half_fringe_thickness = fringe_thickness * 0.5f;
@@ -1499,16 +1590,17 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
 
     const float miter_angle_limit = -0.9999619f; // cos(179.5)
 
-    const float miter_clip_projection_tollerance = 0.001f; //
-
     // Reserve vertices and indices for worst case scenario
     // Unused vertices and indices will be released after the loop
     const ImVec2 uv         = draw_list->_Data->TexUvWhitePixel;
-    const int    vtx_count  = (count * 13 + 4);         // top 13 vertices per join, 4 vertices per butt cap
-    const int    idx_count  = (count * 15 + 4) * 3 + 1;  // top 15 triangles per join, 4 triangles for square cap, 1 to avoid write to non-allocated memory
-    unsigned int idx_offset = draw_list->_VtxCurrentIdx;
+    const int    vtx_count  = (count * 8 + 4);          // top 8 vertices per join, 4 vertices per butt cap
+    const int    idx_count  = (count * 7 + 2) * 3 + 1;  // top 7 triangles per join, 2 triangles for square cap, 1 to avoid write to non-allocated memory
+          int    idx_left   = idx_count;
 
     draw_list->PrimReserve(idx_count, vtx_count);
+
+    const unsigned int idx_offset_start = draw_list->_VtxCurrentIdx;
+    unsigned int idx_offset = idx_offset_start;
 
     ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
     ImDrawIdx*  idx_write = draw_list->_IdxWritePtr;
@@ -1637,7 +1729,7 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
         {
             float bevel_normal_x = n01_x;
             float bevel_normal_y = n01_y;
-            IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
+            IM2_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
 
             const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
 
@@ -1645,8 +1737,8 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
             float dir_0_y = sign * (n0.y + bevel_normal_y) * 0.5f;
             float dir_1_x = sign * (n1.x + bevel_normal_x) * 0.5f;
             float dir_1_y = sign * (n1.y + bevel_normal_y) * 0.5f;
-            IM_FIXNORMAL2F(dir_0_x, dir_0_y);
-            IM_FIXNORMAL2F(dir_1_x, dir_1_y);
+            IM2_FIXNORMAL2F(dir_0_x, dir_0_y);
+            IM2_FIXNORMAL2F(dir_1_x, dir_1_y);
 
 
             //
@@ -1701,7 +1793,7 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
             //   |        | p0     |
             //   ~        ~ /\     ~
             //
-            // 7 vertices
+            // 8 vertices
             //
 
             IM_POLYLINE_VERTEX(0, p1.x - n0.x * half_fringe_thickness, p1.y - n0.y * half_fringe_thickness, uv, color_border);
@@ -1797,14 +1889,14 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
 
                 float bevel_normal_x = n01_x;
                 float bevel_normal_y = n01_y;
-                IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
+                IM2_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
 
                 float dir_0_x = sign * (n0.x + bevel_normal_x) * 0.5f;
                 float dir_0_y = sign * (n0.y + bevel_normal_y) * 0.5f;
                 float dir_1_x = sign * (n1.x + bevel_normal_x) * 0.5f;
                 float dir_1_y = sign * (n1.y + bevel_normal_y) * 0.5f;
-                IM_FIXNORMAL2F(dir_0_x, dir_0_y);
-                IM_FIXNORMAL2F(dir_1_x, dir_1_y);
+                IM2_FIXNORMAL2F(dir_0_x, dir_0_y);
+                IM2_FIXNORMAL2F(dir_1_x, dir_1_y);
 
                 // 5 and 8 vertices are already present
                 IM_POLYLINE_VERTEX(3, p1.x + dir_0_x * fringe_width, p1.y + dir_0_y * fringe_width, uv, color_border);
@@ -1903,6 +1995,24 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
         vtx_write += new_vtx_count;
         idx_offset += new_vtx_count;
 
+        if (idx_offset > (65536 - 10))
+        {
+            const int used_vtx_count = (int)(vtx_write - draw_list->_VtxWritePtr);
+            const int used_idx_count = (int)(idx_write - draw_list->_IdxWritePtr);
+            const int unused_vtx_count = vtx_count - used_vtx_count;
+            const int unused_idx_count = idx_count - used_idx_count;
+            IM_ASSERT(unused_idx_count >= 0);
+            IM_ASSERT(unused_vtx_count >= 0);
+            ImDrawVert* vtx_start = draw_list->_VtxWritePtr;
+            ImDrawIdx*  idx_start = draw_list->_IdxWritePtr;
+            draw_list->_VtxCurrentIdx = idx_offset;
+            draw_list->PrimUnreserve(unused_idx_count, unused_vtx_count);
+            draw_list->PrimReserve(idx_count - used_idx_count, vtx_count - used_vtx_count);
+            draw_list->_VtxWritePtr = vtx_start;
+            draw_list->_IdxWritePtr = idx_start;
+            idx_offset = draw_list->_VtxCurrentIdx;
+        }
+
         p0 = p1;
         n0 = n1;
 
@@ -1936,7 +2046,7 @@ static void ImDrawList_Polyline_AA_Thin_Optimized(ImDrawList* draw_list, const I
             vtx_write[-1].pos.x -= n_end.y * half_fringe_thickness;
             vtx_write[-1].pos.y += n_end.x * half_fringe_thickness;
 
-            const unsigned int zero_index_offset = (unsigned int)(idx_offset - draw_list->_VtxCurrentIdx);
+            const unsigned int zero_index_offset = (unsigned int)(idx_offset - idx_offset_start);
             IM_POLYLINE_TRIANGLE_BEGIN(6);
 
             IM_POLYLINE_TRIANGLE(0, -3, -2, -1);

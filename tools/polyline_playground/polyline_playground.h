@@ -24,6 +24,7 @@ enum class Method
     PR2964,
     New,
     NewOptimized,
+    NewV3,
     Polyline2D,
     Allegro,
     Clipper2

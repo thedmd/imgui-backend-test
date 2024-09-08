@@ -121,7 +121,7 @@ int main(int, char**)
 #endif
 
         static bool ignore_dpi = false;
-        if (ImGui::IsKeyPressed(ImGuiMod_Shift))
+        if (ImGui::IsKeyPressed(ImGuiKey_F1))
             ignore_dpi = !ignore_dpi;
 
         float dpi = ignore_dpi ? 1.0f : ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);

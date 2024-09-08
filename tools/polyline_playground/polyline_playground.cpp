@@ -11,6 +11,13 @@
 #include <span>
 #include <chrono>
 
+#if ENABLE_TRACY
+#include "Tracy.hpp"
+#define ImZoneScoped ZoneScoped
+#else
+#define ImZoneScoped (void)0
+#endif
+
 #pragma region Utilities
 template <typename T>
 inline constexpr bool false_v = std::false_type::value;
@@ -618,6 +625,8 @@ void ImDrawList_Polyline_Clipper2(ImDrawList* draw_list, const ImVec2* data, int
 
 auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, int stress) const -> Stats
 {
+    ImZoneScoped;
+
     ImDrawFlags flags = ImDrawFlags_None;
     if (this->Flags & PolylineFlags_Closed)
         flags |= ImDrawFlags_Closed;
@@ -670,6 +679,10 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
                 ImGuiEx::ImDrawList_Polyline_Optimized(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags | state.LineJoin | state.LineCap, Thickness, state.MiterLimit);
                 break;
 
+            case Method::NewV3:
+                ImGuiEx::ImDrawList_Polyline_V3(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags | state.LineJoin | state.LineCap, Thickness, state.MiterLimit);
+                break;
+
             case Method::Polyline2D:
                 ImDrawList_Polyline2D(draw_list, Points.data(), static_cast<int>(Points.size()), Color, this->Flags, Thickness);
                 break;
@@ -693,7 +706,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
     stats.DurationAvg = stats.Duration / repeat_count;
     stats.Iterations = repeat_count;
 
-    stats.Elements /= 3;
+    //stats.Elements /= 3;
 
     const auto last_vertex = draw_list->VtxBuffer.Size;
 
@@ -1034,6 +1047,7 @@ static void ToolbarAndTabs()
                 { "PR2964",             Method::PR2964       },
                 { "New",                Method::New          },
                 { "New (optimized)",    Method::NewOptimized },
+                { "New V3",             Method::NewV3        },
                 { "Polyline2D",         Method::Polyline2D   },
                 { "Allegro",            Method::Allegro      },
                 { "Clipper2",           Method::Clipper2     }
@@ -1962,5 +1976,13 @@ ImGuiSettingsHandler* GetPolylinePlaygroundSettingsHandler()
 
 void PolylinePlayground()
 {
+    auto& style = ImGui::GetStyle();
+
+    auto last_anti_aliased_lines = style.AntiAliasedLines;
+
+    style.AntiAliasedLinesUseTex = false;
+
     ImPolyline::Playground();
+
+    style.AntiAliasedLines = last_anti_aliased_lines;
 }
