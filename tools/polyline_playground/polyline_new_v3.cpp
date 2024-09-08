@@ -56,12 +56,13 @@ static_assert(2 * sizeof(ImDrawIdx) == sizeof(ImU64), "ImU64 must fit 2 indices"
 
 #define IM_POLYLINE_TRIANGLE_END(M)
 
-#define IM_POLYLINE_ARC(C, R, A0, A1)                                                   \
+#define IM_POLYLINE_ARC(C, R, A, AL)                                                    \
     {                                                                                   \
         const int path_size = draw_list->_Path.Size;                                    \
         draw_list->_Path.resize(path_size + 2);                                         \
         draw_list->_Path[path_size + 1] = C;                                            \
-        draw_list->PathArcTo(C, R, A0, A1);                                             \
+        const float a0 = A;                                                             \
+        draw_list->PathArcTo(C, R, a0, a0 + (AL));                                      \
         int arc_vtx_count = draw_list->_Path.Size - path_size - 1;                      \
         draw_list->_Path[path_size].x = (float)arc_vtx_count;                           \
         draw_list->_Path[path_size].y = 0.0f;                                           \
@@ -322,7 +323,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
 
             if (sin_theta < 0.0f)
             {
-                IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(-n0.y, -n0.x), ImAtan2(-n1.y, -n1.x));
+                IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(-n0.y, -n0.x), ImAcos(cos_theta));
 
                 // Left bevel
                 IM_POLYLINE_VERTEX(3, p1.x - n0.x * half_thickness, p1.y - n0.y * half_thickness, uv, context.fringe_color);
@@ -341,7 +342,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             }
             else
             {
-                IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(n0.y, n0.x), ImAtan2(n1.y, n1.x));
+                IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(n0.y, n0.x), -ImAcos(cos_theta));
 
                 // Right bevel
                 IM_POLYLINE_VERTEX(3, p1.x + n0.x * half_thickness, p1.y + n0.y * half_thickness, uv, context.fringe_color);
@@ -461,11 +462,11 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             {
                 if (sin_theta < 0.0f)
                 {
-                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(-n0.y, -n0.x), ImAtan2(-n1.y, -n1.x));
+                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(-n0.y, -n0.x), ImAcos(cos_theta));
                 }
                 else
                 {
-                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(n0.y, n0.x), ImAtan2(n1.y, n1.x));
+                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(n0.y, n0.x), -ImAcos(cos_theta));
                 }
             }
 
@@ -542,8 +543,8 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             float angle0 = ImAtan2(n0.y, n0.x);
             float angle1 = ImAtan2(n1.y, n1.x);
 
-            IM_POLYLINE_ARC(context.points[0],                       half_thickness, angle0, angle0 + IM_PI);
-            IM_POLYLINE_ARC(context.points[context.point_count - 1], half_thickness, angle1 - IM_PI, angle1);
+            IM_POLYLINE_ARC(context.points[0],                       half_thickness, angle0, IM_PI);
+            IM_POLYLINE_ARC(context.points[context.point_count - 1], half_thickness, angle1, -IM_PI);
         }
     }
 
