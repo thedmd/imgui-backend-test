@@ -43,18 +43,32 @@ static inline float ImRsqrtSSE2Precise(float x)
 #if !defined(ImDrawIdx)
 static_assert(4 * sizeof(ImDrawIdx) == sizeof(ImU64), "ImU64 must fit 4 indices");
 #define IM_POLYLINE_TRIANGLE_EX(N, Z, A, B, C)                  \
-        *(ImU64*)(idx_write) = (ImU64)(Z + A) | ((ImU64)(Z + B) << 16) | ((ImU64)(Z + C) << 32); \
+        *(ImU64*)(idx_write) = (ImU64)((Z) + (A)) | ((ImU64)((Z) + (B)) << 16) | ((ImU64)((Z) + (C)) << 32); \
         idx_write += 3
 #else
 static_assert(2 * sizeof(ImDrawIdx) == sizeof(ImU64), "ImU64 must fit 2 indices");
 #define IM_POLYLINE_TRIANGLE_EX(N, Z, A, B, C)                  \
-        ((ImU64*)(idx_write))[0] = (ImU64)(Z + A) | ((ImU64)(Z + B) << 32); \
-        ((ImU64*)(idx_write))[1] = (ImU64)(Z + C); \
+        ((ImU64*)(idx_write))[0] = (ImU64)((Z) + (A)) | ((ImU64)((Z) + (B)) << 32); \
+        ((ImU64*)(idx_write))[1] = (ImU64)((Z) + (C)); \
         idx_write += 3
 #endif
 #define IM_POLYLINE_TRIANGLE(N, A, B, C) IM_POLYLINE_TRIANGLE_EX(N, idx_start, A, B, C)
 
 #define IM_POLYLINE_TRIANGLE_END(M)
+
+#define IM_POLYLINE_ARC(C, R, A0, A1)                                                   \
+    {                                                                                   \
+        const int path_size = draw_list->_Path.Size;                                    \
+        draw_list->_Path.resize(path_size + 2);                                         \
+        draw_list->_Path[path_size + 1] = C;                                            \
+        draw_list->PathArcTo(C, R, A0, A1);                                             \
+        int arc_vtx_count = draw_list->_Path.Size - path_size - 1;                      \
+        draw_list->_Path[path_size].x = (float)arc_vtx_count;                           \
+        draw_list->_Path[path_size].y = 0.0f;                                           \
+        draw_list->_Path[0].y += draw_list->_Path[path_size].x;                         \
+        ++arc_count;                                                                    \
+    }
+
 
 struct ImDrawList_Polyline_V3_Context
 {
@@ -75,6 +89,64 @@ struct ImDrawList_Polyline_V3_Context
 
 #define IM_POLYLINE_MITER_ANGLE_LIMIT -0.9999619f // cos(179.5)
 
+
+
+static inline void ImDrawList_Polyline_V3_Thin_AntiAliased_Arcs(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context, const int arc_count)
+{
+    const ImVec2 uv = draw_list->_Data->TexUvWhitePixel;
+
+    const ImVec2* arc_data     = draw_list->_Path.Data;
+    const ImVec2* arc_data_end = draw_list->_Path.Data + draw_list->_Path.Size;
+
+    const int arc_total_vtx_count = (int)arc_data->y;
+    const int arc_total_idx_count = (arc_total_vtx_count - arc_count * 2) * 3;
+
+    draw_list->PrimReserve(arc_total_idx_count + 1, arc_total_vtx_count); // +1 to avoid write in non-reserved memory
+
+    ImDrawVert*  vtx_write = draw_list->_VtxWritePtr;
+    ImDrawIdx*   idx_write = draw_list->_IdxWritePtr;
+    unsigned int idx_start = draw_list->_VtxCurrentIdx;
+
+    while (arc_data < arc_data_end)
+    {
+        const int arc_vtx_count = (int)arc_data->x;
+        const int arc_tri_count = (arc_vtx_count - 2);
+        const int arc_idx_count = arc_tri_count * 3;
+
+        ++arc_data;
+
+        IM_POLYLINE_VERTEX(0, arc_data[0].x, arc_data[0].y, uv, context.color);
+        for (int i = 1; i < arc_vtx_count; ++i)
+        {
+            IM_POLYLINE_VERTEX(i, arc_data[i].x, arc_data[i].y, uv, context.fringe_color);
+        }
+
+        arc_data += arc_vtx_count;
+
+        IM_POLYLINE_TRIANGLE_BEGIN(arc_idx_count);
+        for (int i = 0; i < arc_tri_count; ++i)
+        {
+            IM_POLYLINE_TRIANGLE(i, 0, i + 2, i + 1);
+        }
+        IM_POLYLINE_TRIANGLE_END(arc_idx_count);
+
+        vtx_write += arc_vtx_count;
+        idx_start += arc_vtx_count;
+    }
+
+    const int used_idx_count = (int)(idx_write - draw_list->_IdxWritePtr);
+
+    IM_ASSERT(used_idx_count >= 0);
+
+    draw_list->_VtxWritePtr   = vtx_write;
+    draw_list->_IdxWritePtr   = idx_write;
+    draw_list->_VtxCurrentIdx = idx_start;
+
+    draw_list->PrimUnreserve(arc_total_idx_count - used_idx_count + 1, 0);
+
+    draw_list->_Path.Size = 0;
+}
+
 // Simplified version of thick line renderer that does render only fringe
 // Differences:
 //   - miter-clip always collapse to bevel
@@ -82,9 +154,10 @@ struct ImDrawList_Polyline_V3_Context
 //   - join picking logic is simplified
 static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context)
 {
-    enum JoinType { Miter, Butt, Bevel, ThickButt };
+    enum JoinType { Miter, Butt, Bevel, Round, ThickButt };
 
-    const JoinType default_join = (context.join == ImDrawFlags_JoinBevel) ? Bevel : Miter;
+    const JoinType default_join = (context.join == ImDrawFlags_JoinBevel) ? Bevel : (context.join == ImDrawFlags_JoinRound ? Round : Miter);
+    const JoinType default_join_limit = (context.join == ImDrawFlags_JoinRound) ? Round : Bevel;
 
     const float half_thickness           = context.fringe_thickness * 0.5f;
     const float miter_distance_limit     = half_thickness * context.miter_limit;
@@ -102,14 +175,14 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
     ImDrawIdx*   idx_write = draw_list->_IdxWritePtr;
     unsigned int idx_start = draw_list->_VtxCurrentIdx;
 
+    int arc_count = 0;
+
     ImVec2 p0 = context.points [context.closed ? context.point_count - 1 : 0];
     ImVec2 n0 = context.normals[context.closed ? context.point_count - 1 : 0];
 
     IM_POLYLINE_VERTEX(0, p0.x - n0.x * half_thickness, p0.y - n0.y * half_thickness, uv, context.fringe_color);
     IM_POLYLINE_VERTEX(1, p0.x,                         p0.y,                         uv, context.color);
     IM_POLYLINE_VERTEX(2, p0.x + n0.x * half_thickness, p0.y + n0.y * half_thickness, uv, context.fringe_color);
-
-    ImDrawFlags last_join = ImDrawFlags_None;
 
     for (int i = context.closed ? 0 : 1; i < context.point_count; ++i)
     {
@@ -127,7 +200,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
 
         const bool   overlap          = (context.segments_length_sqr[i] < miter_distance_sqr) || (context.segments_length_sqr[i + 1] < miter_distance_sqr);
 
-        const JoinType preferred_join = (context.closed || i != context.point_count - 1) ? (miter_distance_sqr > miter_distance_limit_sqr ? Bevel : default_join) : Butt;
+        const JoinType preferred_join = (context.closed || i != context.point_count - 1) ? (miter_distance_sqr > miter_distance_limit_sqr ? default_join_limit : default_join) : Butt;
         const JoinType join           = overlap ? ThickButt : preferred_join;
 
         //
@@ -224,6 +297,65 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
                 IM_POLYLINE_TRIANGLE(3, 2, 3, 5);
                 IM_POLYLINE_TRIANGLE(4, 3, 5, 6);
                 IM_POLYLINE_TRIANGLE_END(15);
+                idx_start += 4;
+            }
+        }
+        else IM_UNLIKELY if (join == Round)
+        {
+            //
+            // Round geometry depends on the sign of the bend direction.
+            //
+            // Left bevel:              Right bevel:
+            //
+            //         4  .+          |          +.  6
+            //        .-+'  ~         |         ~  '+-.
+            //      .'  |    .+       |       +.    |  '.
+            //     :    |5 .'   ~     |     ~   '. 5|    :
+            //   3 +----+:'      .+   |   +.      ':+----+ 3
+            //     |   '|''.   .'     |     '.   .''|'   |
+            //     |  ' | ' '+'       |       '+' ' | '  |
+            //     |.'  |  '.|6       |       4|.'  |  '.|
+            //     + ~  +  ~ +        |        + ~  +  ~ +
+            //     0    1    2        |        0    1    2
+            //
+            const float sin_theta = n0.y * n1.x - n0.x * n1.y;
+
+            if (sin_theta < 0.0f)
+            {
+                IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(-n0.y, -n0.x), ImAtan2(-n1.y, -n1.x));
+
+                // Left bevel
+                IM_POLYLINE_VERTEX(3, p1.x - n0.x * half_thickness, p1.y - n0.y * half_thickness, uv, context.fringe_color);
+                IM_POLYLINE_VERTEX(4, p1.x - n1.x * half_thickness, p1.y - n1.y * half_thickness, uv, context.fringe_color);
+                IM_POLYLINE_VERTEX(5, p1.x,                         p1.y,                         uv, context.color);
+                IM_POLYLINE_VERTEX(6, p1.x + miter_offset_x,        p1.y + miter_offset_y,        uv, context.fringe_color);
+                vtx_write += 4;
+
+                IM_POLYLINE_TRIANGLE_BEGIN(13);
+                IM_POLYLINE_TRIANGLE(0, 0, 1, 5);
+                IM_POLYLINE_TRIANGLE(1, 0, 5, 3);
+                IM_POLYLINE_TRIANGLE(2, 1, 2, 5);
+                IM_POLYLINE_TRIANGLE(3, 2, 6, 5);
+                IM_POLYLINE_TRIANGLE_END(13);
+                idx_start += 4;
+            }
+            else
+            {
+                IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(n0.y, n0.x), ImAtan2(n1.y, n1.x));
+
+                // Right bevel
+                IM_POLYLINE_VERTEX(3, p1.x + n0.x * half_thickness, p1.y + n0.y * half_thickness, uv, context.fringe_color);
+                IM_POLYLINE_VERTEX(4, p1.x - miter_offset_x,        p1.y - miter_offset_y,        uv, context.fringe_color);
+                IM_POLYLINE_VERTEX(5, p1.x,                         p1.y,                         uv, context.color);
+                IM_POLYLINE_VERTEX(6, p1.x + n1.x * half_thickness, p1.y + n1.y * half_thickness, uv, context.fringe_color);
+                vtx_write += 4;
+
+                IM_POLYLINE_TRIANGLE_BEGIN(13);
+                IM_POLYLINE_TRIANGLE(0, 0, 1, 5);
+                IM_POLYLINE_TRIANGLE(1, 0, 5, 4);
+                IM_POLYLINE_TRIANGLE(2, 1, 2, 5);
+                IM_POLYLINE_TRIANGLE(3, 2, 3, 5);
+                IM_POLYLINE_TRIANGLE_END(13);
                 idx_start += 4;
             }
         }
@@ -325,6 +457,17 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
                     IM_POLYLINE_TRIANGLE_END(3);
                 }
             }
+            else IM_UNLIKELY if (preferred_join == Round)
+            {
+                if (sin_theta < 0.0f)
+                {
+                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(-n0.y, -n0.x), ImAtan2(-n1.y, -n1.x));
+                }
+                else
+                {
+                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(n0.y, n0.x), ImAtan2(n1.y, n1.x));
+                }
+            }
 
             vtx_write += 6;
             idx_start += 6;
@@ -342,7 +485,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
     }
     else
     {
-        if (context.cap == ImDrawFlags_CapSquare)
+        IM_UNLIKELY if (context.cap == ImDrawFlags_CapSquare)
         {
             // Form a square cap by moving Butt cap corner vertices
             // along the direction of the segment they belong to.
@@ -353,7 +496,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             //     |'.       .'|
             //     |  '. 1 .'  |
             //     |    '+'    |
-            //     | ~ ~ + ~ ~ |
+            //     | ~ ~ ~ ~ ~ |
             //                 
 
             ImVec2 n_begin = context.normals[0];
@@ -381,6 +524,27 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             IM_POLYLINE_TRIANGLE_EX(1, draw_list->_VtxCurrentIdx, 0, 2, 1);
             IM_POLYLINE_TRIANGLE_END(6);
         }
+        else IM_UNLIKELY if (context.cap == ImDrawFlags_CapRound)
+        {
+            // Form a round cap by adding a circle at the end of the line
+            // 
+            //        ..---..
+            //      .'       '.
+            //     :  r        :
+            //   0 +-----+-----+ 2
+            //     |     1     |
+            //     | ~ ~ ~ ~ ~ |
+            //
+
+            ImVec2 n0 = context.normals[0];
+            ImVec2 n1 = context.normals[context.point_count - 1];
+
+            float angle0 = ImAtan2(n0.y, n0.x);
+            float angle1 = ImAtan2(n1.y, n1.x);
+
+            IM_POLYLINE_ARC(context.points[0],                       half_thickness, angle0, angle0 + IM_PI);
+            IM_POLYLINE_ARC(context.points[context.point_count - 1], half_thickness, angle1 - IM_PI, angle1);
+        }
     }
 
     vtx_write += 3;
@@ -394,6 +558,9 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
     draw_list->_VtxCurrentIdx = idx_start;
 
     draw_list->PrimUnreserve(idx_count - used_idx_count, vtx_count - used_vtx_count);
+
+    IM_UNLIKELY if (arc_count > 0)
+        ImDrawList_Polyline_V3_Thin_AntiAliased_Arcs(draw_list, context, arc_count);
 }
 
 static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context)
@@ -622,16 +789,18 @@ void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int
         ImVec2* normals             = draw_list->_Data->TempBuffer.Data;
         float*  segments_length_sqr = (float*)(normals + count);
 
+        const int segment_count = count - 1;
+
         int i = 0;
 
 #if defined(IMGUI_ENABLE_SSE)
         // SSE2 path intentionally is trying to use as few variables as possible to make
         // compiler emit less instructions to store and load them from memory in debug
         // configuration. Optimized build should be able to keep all variables in registers.
-        IM_LIKELY if (count > 4)
+        IM_LIKELY if (segment_count >= 4)
         {
             // Process 4 segments at once, single sqrt call is used to compute 4 normals
-            for (; i < (count - 1) / 4; i += 4)
+            for (; i < segment_count / 4; i += 4)
             {
                 __m128 diff_01 = _mm_sub_ps(_mm_loadu_ps(&data[i + 1].x), _mm_loadu_ps(&data[i].x));
                 __m128 dxy2_01 = _mm_mul_ps(diff_01, diff_01);
@@ -648,10 +817,10 @@ void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int
             }
         }
 
-        IM_LIKELY if (count > 2)
+        IM_LIKELY if (segment_count >= 2)
         {
             // Process 2 segments at once
-            for (; i < (count - 1) / 2; i += 2)
+            for (; i < segment_count / 2; i += 2)
             {
                 __m128 diff  = _mm_sub_ps(_mm_loadu_ps(&data[i + 1].x), _mm_loadu_ps(&data[i].x));
                 __m128 dxy2  = _mm_mul_ps(diff, diff);
@@ -677,7 +846,7 @@ void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int
             segments_length_sqr_out = d2;                                                                       \
         }
 
-        for (; i < count - 1; ++i)
+        for (; i < segment_count; ++i)
             IM_POLYLINE_COMPUTE_NORMALS_AND_SEGMENTS_SQUARE_LENGTHS(i, i + 1, normals[i], segments_length_sqr[i + 1]);
         
         if (context.closed)
@@ -720,6 +889,9 @@ void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int
         context.segments_length_sqr = segments_length_sqr;
     }
 
+    // _Path is used to store queue arcs for round caps and joins
+    draw_list->_Path.Size = 0;
+
     if (draw_list->Flags & ImDrawListFlags_AntiAliasedLines)
     {
         context.color        = color;
@@ -745,9 +917,9 @@ void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int
             context.fringe_thickness = context.thickness + context.fringe_width * 2.0f;
         }
 
-        if (context.thickness > 0.0f)
-            ImDrawList_Polyline_V3_Thick_AntiAliased(draw_list, context);
-        else
+        //if (context.thickness > 0.0f)
+        //    ImDrawList_Polyline_V3_Thick_AntiAliased(draw_list, context);
+        //else
             ImDrawList_Polyline_V3_Thin_AntiAliased(draw_list, context);
     }
     else
