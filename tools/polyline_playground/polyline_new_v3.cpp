@@ -589,7 +589,7 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
     // Unused vertices and indices will be released after the loop
     const ImVec2 uv         = draw_list->_Data->TexUvWhitePixel;
     const int    vtx_count  = (context.point_count * 17 + 4);         // top 17 vertices per join, 3 vertices for butt cap
-    const int    idx_count  = (context.point_count *  7 + 4) * 3 + 1; // top 7 triangles per join, 4 for square cap, 1 index to avoid write in non-reserved memory
+    const int    idx_count  = (context.point_count * 15 + 4) * 3 + 1; // top 15 triangles per join, 4 for square cap, 1 index to avoid write in non-reserved memory
 
     draw_list->PrimReserve(idx_count, vtx_count);
 
@@ -892,7 +892,7 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
             //   +  + ~     ~ +  +
             //   0  1         2  3
             // 
-            // 17 vertices, 6 triangles (base) + up to N triangles according to join type
+            // 17 vertices, 15 triangles total, 6 triangles (base)
             // 
             // Vertices 8, 9, 10, 11, 12 are used to fill the gap between segments.
             // Gap between segments is filled according to preferred join type.
@@ -923,69 +923,213 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
             IM_POLYLINE_TRIANGLE(4, 2, 7, 6);
             IM_POLYLINE_TRIANGLE_END(18);
 
-#if 0
             if (preferred_join == Miter)
             {
                 // Fill gap between segments with Miter join
                 // 
                 // Left Miter join:        Right Miter join:
                 // 
-                //            ,          |              ,
-                //       6  .'    ~      |          ~    '.  8
-                //    5'  .+.            |                .+.  '5
-                //      +:.  '.     .'   |       '.     .'  .:+
-                //      |  ''..:. .'     |         '. .:..''  |
-                //      +--------+-- ~   |       ~ --+--------+
-                //     3|       7|       |           |7       |4
+                //                      13         |         16
+                //    +----------------+           |           +----------------+
+                //   8 \''..  9....'''' \          |          /......''''''::''/ 8
+                //      \   ''+----------+ 14      |      15 +----------+'' ,'/
+                //       \    :\       .' \        |        /      ,,''/9 ,' /
+                //        \  :  \    .'    \       |       /   ,,''   / ,'  /
+                //         \:    \ .'       \ p1   |   p1 /..''      /,'   /
+                //          +-----+----------x-~   |   ~-x----------+-----+
+                //          4     5        10 \    |    / 10        6     7
+                //                             ~   |   ~
+                // 
+                // Used 3 vertices to fill the gap between segments.
+                // 
+                // 6 join triangles, 12 total
                 //
 
                 if (sin_theta < 0.0f)
                 {
-                    IM_POLYLINE_VERTEX(5, p1.x - miter_offset_x, p1.y - miter_offset_y, uv, context.fringe_color);
+                    IM_POLYLINE_VERTEX(8, p1.x - fringe_miter_offset_x, p1.y - fringe_miter_offset_y, uv, context.fringe_color);
+                    IM_POLYLINE_VERTEX(9, p1.x -        miter_offset_x, p1.y -        miter_offset_y, uv, context.color);
+                    // 10 is already set to p1
 
-                    IM_POLYLINE_TRIANGLE_BEGIN(6);
-                    IM_POLYLINE_TRIANGLE(0, 3, 7, 5);
-                    IM_POLYLINE_TRIANGLE(1, 5, 7, 6);
-                    IM_POLYLINE_TRIANGLE_END(6);
+                    IM_POLYLINE_TRIANGLE_BEGIN(18);
+                    IM_POLYLINE_TRIANGLE(0, 5, 14, 10);
+                    IM_POLYLINE_TRIANGLE(1, 5, 14,  9);
+                    IM_POLYLINE_TRIANGLE(2, 4,  5,  9);
+                    IM_POLYLINE_TRIANGLE(3, 4,  9,  8);
+                    IM_POLYLINE_TRIANGLE(4, 9, 13,  8);
+                    IM_POLYLINE_TRIANGLE(5, 9, 14, 13);
+                    IM_POLYLINE_TRIANGLE_END(18);
                 }
                 else
                 {
-                    IM_POLYLINE_VERTEX(5, p1.x + miter_offset_x, p1.y + miter_offset_y, uv, context.fringe_color);
+                    IM_POLYLINE_VERTEX(8, p1.x + fringe_miter_offset_x, p1.y + fringe_miter_offset_y, uv, context.fringe_color);
+                    IM_POLYLINE_VERTEX(9, p1.x +        miter_offset_x, p1.y +        miter_offset_y, uv, context.color);
+                    // 10 is already set to p1
 
-                    IM_POLYLINE_TRIANGLE_BEGIN(6);
-                    IM_POLYLINE_TRIANGLE(0, 4, 5, 7);
-                    IM_POLYLINE_TRIANGLE(1, 5, 8, 7);
-                    IM_POLYLINE_TRIANGLE_END(6);
+                    IM_POLYLINE_TRIANGLE_BEGIN(18);
+                    IM_POLYLINE_TRIANGLE(0, 10,  6,  9);
+                    IM_POLYLINE_TRIANGLE(1, 10,  9, 15);
+                    IM_POLYLINE_TRIANGLE(2,  6,  7,  8);
+                    IM_POLYLINE_TRIANGLE(3,  6,  8,  9);
+                    IM_POLYLINE_TRIANGLE(4,  9,  8, 15);
+                    IM_POLYLINE_TRIANGLE(5, 15,  8, 16);
+                    IM_POLYLINE_TRIANGLE_END(18);
                 }
             }
-            else if (preferred_join == Bevel)
+            else if (preferred_join == Bevel || preferred_join == MiterClip)
             {
-                // Fill gap between segments with Bevel join
-                //
-                // Left Bevel join:       Right Bevel join:
-                //
-                //            ,          |             ,
-                //       6  .'    ~      |         ~    '.  8
-                //         +.            |               .+
-                //        '  '.     .'   |      '.     .'  '
-                //       '     '. .'     |        '. .'     '
-                //      +--------+-- ~   |      ~ --+--------+
-                //     3|       7|       |          |7       |4
-                //
+                float bevel_normal_x = n0.x + n1.x;
+                float bevel_normal_y = n0.y + n1.y;
+                IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
 
-                if (sin_theta < 0.0f)
+                const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
+
+                float dir_0_x = (n0.x + bevel_normal_x) * 0.5f;
+                float dir_0_y = (n0.y + bevel_normal_y) * 0.5f;
+                float dir_1_x = (n1.x + bevel_normal_x) * 0.5f;
+                float dir_1_y = (n1.y + bevel_normal_y) * 0.5f;
+                IM_FIXNORMAL2F(dir_0_x, dir_0_y);
+                IM_FIXNORMAL2F(dir_1_x, dir_1_y);
+                dir_0_x *= context.fringe_width;
+                dir_0_y *= context.fringe_width;
+                dir_1_x *= context.fringe_width;
+                dir_1_y *= context.fringe_width;
+
+                if (preferred_join == Bevel)
                 {
-                    IM_POLYLINE_TRIANGLE_BEGIN(3);
-                    IM_POLYLINE_TRIANGLE(0, 3, 7, 6);
-                    IM_POLYLINE_TRIANGLE_END(3);
+                    // Fill gap between segments with Bevel join
+                    //
+                    // Left Bevel join:             Right Bevel join:
+                    //
+                    //                13          |          16
+                    //            9  +            |            +  9 
+                    //             +: \           |           / :+
+                    //           .'' '.+ 14       |       15 +.' ''.
+                    //         .' '  .' \         |         / '.  ' '.
+                    //    8  .'  ' .'    \        |        /    '. '  '.  8
+                    //     +:.. '.'       \ p1    |    p1 /       '.' ..:+
+                    //    +----:+----------x-~    |    ~-x----------+:----+
+                    //    4     5        10 \     |     / 10        6     7
+                    //                       ~    |    ~
+                    //
+                    // Used 3 vertices to fill the gap between segments.
+                    //
+                    // 5 join triangles, 11 total
+                    //
+
+                    const float pt_x = p1.x;
+                    const float pt_y = p1.y;
+                    const float d0_x = n0.x * half_thickness;
+                    const float d0_y = n0.y * half_thickness;
+                    const float d1_x = n1.x * half_thickness;
+                    const float d1_y = n1.y * half_thickness;
+
+                    if (sin_theta < 0.0f)
+                    {
+                        IM_POLYLINE_VERTEX(8, pt_x - dir_0_x - d0_x, pt_y - dir_0_y - d0_y, uv, context.fringe_color);
+                        IM_POLYLINE_VERTEX(9, pt_x - dir_1_x - d1_x, pt_y - dir_1_y - d1_y, uv, context.fringe_color);
+                        // 10 is already set to p1
+
+                        IM_POLYLINE_TRIANGLE_BEGIN(15);
+                        IM_POLYLINE_TRIANGLE(0, 5, 10, 14);
+                        IM_POLYLINE_TRIANGLE(1, 5,  8,  4);
+                        IM_POLYLINE_TRIANGLE(2, 9, 14, 13);
+                        IM_POLYLINE_TRIANGLE(3, 5, 14,  9);
+                        IM_POLYLINE_TRIANGLE(4, 5,  9,  8);
+                        IM_POLYLINE_TRIANGLE_END(15);
+                    }
+                    else
+                    {
+                        IM_POLYLINE_VERTEX(8, pt_x + dir_0_x + d0_x, pt_y + dir_0_y + d0_y, uv, context.fringe_color);
+                        IM_POLYLINE_VERTEX(9, pt_x + dir_1_x + d1_x, pt_y + dir_1_y + d1_y, uv, context.fringe_color);
+                        // 10 is already set to p1
+
+                        IM_POLYLINE_TRIANGLE_BEGIN(15);
+                        IM_POLYLINE_TRIANGLE(0, 6, 15, 10);
+                        IM_POLYLINE_TRIANGLE(1, 6,  7,  8);
+                        IM_POLYLINE_TRIANGLE(2, 9, 16, 15);
+                        IM_POLYLINE_TRIANGLE(3, 6,  8,  9);
+                        IM_POLYLINE_TRIANGLE(4, 6,  9, 15);
+                        IM_POLYLINE_TRIANGLE_END(15);
+                    }
                 }
                 else
                 {
-                    IM_POLYLINE_TRIANGLE_BEGIN(3);
-                    IM_POLYLINE_TRIANGLE(1, 7, 4, 8);
-                    IM_POLYLINE_TRIANGLE_END(3);
+                    // Fill gap between segments with clipped Bevel join
+                    //
+                    // Left Bevel join:                     Right Bevel join:
+                    //
+                    //                      13            |             16
+                    //               10  ..+              |               +..  10
+                    //                 +'   \             |              /   '+
+                    //               .' .'.. \ 14         |          15 / ..'. '.
+                    //             .'    .  :.+           |            +.:  .    '.
+                    //           .'    .. +'11 \          |           / 11'+ ..    '.
+                    //         .'  ..'' .' '.   \         |          /   .' '. ''..  '.
+                    //       .'..''  9.'     '.  \        |         /  .'     '.9  ''..'.
+                    //     8+.....'''+....     '. \       |        / .'     ....+'''.....+8
+                    //     :   ''.. :     '''''..:.\ p1   |    p1 /.:..'''''     : ..''   :
+                    //    +--------+----------------x-~   |    ~-x----------------+--------+
+                    //    4        5              12 \    |     / 12              6        7
+                    //                                ~   |    ~
+                    //
+                    // Used 5 vertices to fill the gap between segments.
+                    //
+                    // 9 join triangles, 15 total
+                    //
+
+                    const float offset = (n0.x * (bevel_normal_x * miter_distance_limit - n0.x * half_thickness) + n0.y * (bevel_normal_y * miter_distance_limit - n0.y * half_thickness)) / (n0.y * bevel_normal_x - n0.x * bevel_normal_y);
+
+                    const float pt_x = p1.x - sign * bevel_normal_x * miter_distance_limit;
+                    const float pt_y = p1.y - sign * bevel_normal_y * miter_distance_limit;
+                    const float d0_x =  offset * bevel_normal_y;
+                    const float d0_y = -offset * bevel_normal_x;
+                    const float d1_x = -offset * bevel_normal_y;
+                    const float d1_y =  offset * bevel_normal_x;
+
+                    if (sin_theta < 0.0f)
+                    {
+                        IM_POLYLINE_VERTEX( 8, pt_x - dir_0_x - d0_x, pt_y - dir_0_y - d0_y, uv, context.fringe_color);
+                        IM_POLYLINE_VERTEX( 9, pt_x -           d0_x, pt_y -           d0_y, uv, context.color);
+                        IM_POLYLINE_VERTEX(10, pt_x - dir_1_x - d1_x, pt_y - dir_1_y - d1_y, uv, context.fringe_color);
+                        IM_POLYLINE_VERTEX(11, pt_x -           d1_x, pt_y -           d1_y, uv, context.color);
+                        // 12 is already set to p1
+
+                        IM_POLYLINE_TRIANGLE_BEGIN(27);
+                        IM_POLYLINE_TRIANGLE(0, 12, 14, 11);
+                        IM_POLYLINE_TRIANGLE(1, 12, 11,  9);
+                        IM_POLYLINE_TRIANGLE(2, 12,  9,  5);
+                        IM_POLYLINE_TRIANGLE(3,  5,  9,  8);
+                        IM_POLYLINE_TRIANGLE(4,  5,  8,  4);
+                        IM_POLYLINE_TRIANGLE(5, 14, 13, 10);
+                        IM_POLYLINE_TRIANGLE(6, 14, 10, 11);
+                        IM_POLYLINE_TRIANGLE(7,  8,  9, 11);
+                        IM_POLYLINE_TRIANGLE(8,  8, 11, 10);
+                        IM_POLYLINE_TRIANGLE_END(27);
+                    }
+                    else
+                    {
+                        IM_POLYLINE_VERTEX( 8, pt_x + dir_0_x + d0_x, pt_y + dir_0_y + d0_y, uv, context.fringe_color);
+                        IM_POLYLINE_VERTEX( 9, pt_x +           d0_x, pt_y +           d0_y, uv, context.color);
+                        IM_POLYLINE_VERTEX(10, pt_x + dir_1_x + d1_x, pt_y + dir_1_y + d1_y, uv, context.fringe_color);
+                        IM_POLYLINE_VERTEX(11, pt_x +           d1_x, pt_y +           d1_y, uv, context.color);
+                        // 12 is already set to p1
+
+                        IM_POLYLINE_TRIANGLE_BEGIN(27);
+                        IM_POLYLINE_TRIANGLE(0, 12,  6,  9);
+                        IM_POLYLINE_TRIANGLE(1, 12,  9, 11);
+                        IM_POLYLINE_TRIANGLE(2, 12, 11, 15);
+                        IM_POLYLINE_TRIANGLE(3,  6,  7,  8);
+                        IM_POLYLINE_TRIANGLE(4,  6,  8,  9);
+                        IM_POLYLINE_TRIANGLE(5, 15, 11, 10);
+                        IM_POLYLINE_TRIANGLE(6, 15, 10, 16);
+                        IM_POLYLINE_TRIANGLE(7, 11,  9,  8);
+                        IM_POLYLINE_TRIANGLE(8, 11,  8, 10);
+                        IM_POLYLINE_TRIANGLE_END(27);
+                    }
                 }
             }
+#if 0
             else IM_UNLIKELY if (preferred_join == Round)
             {
                 if (sin_theta < 0.0f)
