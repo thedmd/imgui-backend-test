@@ -61,6 +61,47 @@ static_assert(2 * sizeof(ImDrawIdx) == sizeof(ImU64), "ImU64 must fit 2 indices"
 
 #define IM_POLYLINE_TRIANGLE_END(M)
 
+#define IM_POLYLINE_BEVEL_VECTORS(BX, BY, D0X, D0Y, D1X, D1Y, THICKNESS) \
+    {                                                                    \
+        BX = n0.x + n1.x;                                                \
+        BY = n0.y + n1.y;                                                \
+        IM_NORMALIZE2F_OVER_ZERO(BX, BY);                                \
+                                                                         \
+        D0X = (n0.x + BX) * 0.5f;                                        \
+        D0Y = (n0.y + BY) * 0.5f;                                        \
+        D1X = (n1.x + BX) * 0.5f;                                        \
+        D1Y = (n1.y + BY) * 0.5f;                                        \
+        IM_FIXNORMAL2F(D0X, D0Y);                                        \
+        IM_FIXNORMAL2F(D1X, D1Y);                                        \
+        D0X *= THICKNESS;                                                \
+        D0Y *= THICKNESS;                                                \
+        D1X *= THICKNESS;                                                \
+        D1Y *= THICKNESS;                                                \
+    }
+
+#define IM_POLYLINE_BEVEL_GEOMETRY(PX, PY, D0X, D0Y, D1X, D1Y) \
+    {                                                          \
+        PX  = p1.x;                                            \
+        PY  = p1.y;                                            \
+        D0X = n0.x * half_thickness;                           \
+        D0Y = n0.y * half_thickness;                           \
+        D1X = n1.x * half_thickness;                           \
+        D1Y = n1.y * half_thickness;                           \
+    }
+
+#define IM_POLYLINE_CLIPPED_BEVEL_GEOMETRY(PX, PY, D0X, D0Y, D1X, D1Y, THICKNESS, LIMIT) \
+    {                                                                                    \
+        const float signed_miter_distance_limit = sin_theta < 0.0f ? LIMIT : -LIMIT;     \
+        const float offset = (n0.x * (bevel_normal_x * LIMIT - n0.x * THICKNESS) + n0.y * (bevel_normal_y * LIMIT - n0.y * THICKNESS)) / (n0.y * bevel_normal_x - n0.x * bevel_normal_y); \
+                                                                                         \
+        PX  = p1.x - bevel_normal_x * signed_miter_distance_limit;                       \
+        PY  = p1.y - bevel_normal_y * signed_miter_distance_limit;                       \
+        D0X =  offset * bevel_normal_y;                                                  \
+        D0Y = -offset * bevel_normal_x;                                                  \
+        D1X = -offset * bevel_normal_y;                                                  \
+        D1Y =  offset * bevel_normal_x;                                                  \
+    }
+
 #define IM_POLYLINE_ARC(C, R, A, AL)                                                    \
     {                                                                                   \
         const int path_size = draw_list->_Path.Size;                                    \
@@ -97,7 +138,7 @@ struct ImDrawList_Polyline_V3_Context
 
 
 
-static inline void ImDrawList_Polyline_V3_Thin_AntiAliased_Arcs(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context, const int arc_count)
+static inline void ImDrawList_Polyline_V3_EmitArcs(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context, const int arc_count)
 {
     const ImVec2 uv = draw_list->_Data->TexUvWhitePixel;
 
@@ -133,6 +174,73 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased_Arcs(ImDrawList* draw
         for (int i = 0; i < arc_tri_count; ++i)
         {
             IM_POLYLINE_TRIANGLE(i, 0, i + 2, i + 1);
+        }
+        IM_POLYLINE_TRIANGLE_END(arc_idx_count);
+
+        vtx_write += arc_vtx_count;
+        idx_start += arc_vtx_count;
+    }
+
+    const int used_idx_count = (int)(idx_write - draw_list->_IdxWritePtr);
+
+    IM_ASSERT(used_idx_count >= 0);
+
+    draw_list->_VtxWritePtr   = vtx_write;
+    draw_list->_IdxWritePtr   = idx_write;
+    draw_list->_VtxCurrentIdx = idx_start;
+
+    draw_list->PrimUnreserve(arc_total_idx_count - used_idx_count + 1, 0);
+
+    draw_list->_Path.Size = 0;
+}
+
+static inline void ImDrawList_Polyline_V3_EmitArcsWithFringe(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context, const int arc_count)
+{
+    const ImVec2 uv = draw_list->_Data->TexUvWhitePixel;
+
+    const ImVec2* arc_data     = draw_list->_Path.Data;
+    const ImVec2* arc_data_end = draw_list->_Path.Data + draw_list->_Path.Size;
+
+    const int arc_total_pts_count = (int)arc_data->y;
+    const int arc_total_vtx_count = arc_total_pts_count * 2 - arc_count; // 1 center vertex per arc, 2 fringe vertices per arc
+    const int arc_total_idx_count = (arc_total_pts_count - arc_count * 2) * 3 * 3; // 3 indices per triangle, 3 triangles per arc segment
+
+    draw_list->PrimReserve(arc_total_idx_count + 1, arc_total_vtx_count); // +1 to avoid write in non-reserved memory
+
+    ImDrawVert*  vtx_write = draw_list->_VtxWritePtr;
+    ImDrawIdx*   idx_write = draw_list->_IdxWritePtr;
+    unsigned int idx_start = draw_list->_VtxCurrentIdx;
+
+    const float thickness_scale = context.thickness / context.fringe_thickness;
+
+    while (arc_data < arc_data_end)
+    {
+        const int arc_pts_count = (int)arc_data->x;
+        const int arc_vtx_count = arc_pts_count * 2 - 1;
+        const int arc_tri_count = (arc_pts_count - 2) * 3;
+        const int arc_idx_count = arc_tri_count * 3;
+
+        ++arc_data;
+
+        IM_POLYLINE_VERTEX(0, arc_data[0].x, arc_data[0].y, uv, context.color);
+        for (int i = 1; i < arc_pts_count; ++i)
+        {
+            const ImVec2 outter = arc_data[i];
+            const ImVec2 inner  = ImVec2((outter.x - arc_data->x) * thickness_scale + arc_data->x, (outter.y - arc_data->y) * thickness_scale + arc_data->y);
+
+            IM_POLYLINE_VERTEX(i * 2 - 1,  inner.x,  inner.y, uv, context.color);
+            IM_POLYLINE_VERTEX(i * 2 + 0, outter.x, outter.y, uv, context.fringe_color);
+        }
+
+        arc_data += arc_pts_count;
+
+        IM_POLYLINE_TRIANGLE_BEGIN(arc_idx_count);
+        for (int i = 0; i < arc_tri_count / 3; ++i)
+        {
+            const int base = i * 2;
+            IM_POLYLINE_TRIANGLE(i,        0, base + 3, base + 1);
+            IM_POLYLINE_TRIANGLE(i, base + 1, base + 3, base + 4);
+            IM_POLYLINE_TRIANGLE(i, base + 1, base + 4, base + 2);
         }
         IM_POLYLINE_TRIANGLE_END(arc_idx_count);
 
@@ -548,7 +656,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             float angle0 = ImAtan2(n0.y, n0.x);
             float angle1 = ImAtan2(n1.y, n1.x);
 
-            IM_POLYLINE_ARC(context.points[0],                       half_thickness, angle0, IM_PI);
+            IM_POLYLINE_ARC(context.points[0],                       half_thickness, angle0,  IM_PI);
             IM_POLYLINE_ARC(context.points[context.point_count - 1], half_thickness, angle1, -IM_PI);
         }
     }
@@ -566,7 +674,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
     draw_list->PrimUnreserve(idx_count - used_idx_count, vtx_count - used_vtx_count);
 
     IM_UNLIKELY if (arc_count > 0)
-        ImDrawList_Polyline_V3_Thin_AntiAliased_Arcs(draw_list, context, arc_count);
+        ImDrawList_Polyline_V3_EmitArcs(draw_list, context, arc_count);
 }
 
 static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context)
@@ -716,43 +824,18 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
 
             const float sin_theta = n0.y * n1.x - n0.x * n1.y;
 
-            float bevel_normal_x = n0.x + n1.x;
-            float bevel_normal_y = n0.y + n1.y;
-            IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
-
-            const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
-
-            float dir_0_x = (n0.x + bevel_normal_x) * 0.5f;
-            float dir_0_y = (n0.y + bevel_normal_y) * 0.5f;
-            float dir_1_x = (n1.x + bevel_normal_x) * 0.5f;
-            float dir_1_y = (n1.y + bevel_normal_y) * 0.5f;
-            IM_FIXNORMAL2F(dir_0_x, dir_0_y);
-            IM_FIXNORMAL2F(dir_1_x, dir_1_y);
-            dir_0_x *= context.fringe_width;
-            dir_0_y *= context.fringe_width;
-            dir_1_x *= context.fringe_width;
-            dir_1_y *= context.fringe_width;
+            float bevel_normal_x, bevel_normal_y;
+            float dir_0_x, dir_0_y, dir_1_x, dir_1_y;
+            IM_POLYLINE_BEVEL_VECTORS(bevel_normal_x, bevel_normal_y, dir_0_x, dir_0_y, dir_1_x, dir_1_y, context.fringe_width);
 
             float pt_x, pt_y, d0_x, d0_y, d1_x, d1_y;
             if (join == Bevel)
             {
-                pt_x = p1.x;
-                pt_y = p1.y;
-                d0_x = n0.x * half_thickness;
-                d0_y = n0.y * half_thickness;
-                d1_x = n1.x * half_thickness;
-                d1_y = n1.y * half_thickness;
+                IM_POLYLINE_BEVEL_GEOMETRY(pt_x, pt_y, d0_x, d0_y, d1_x, d1_y);
             }
             else
             {
-                const float offset = (n0.x * (bevel_normal_x * miter_distance_limit - n0.x * half_thickness) + n0.y * (bevel_normal_y * miter_distance_limit - n0.y * half_thickness)) / (n0.y * bevel_normal_x - n0.x * bevel_normal_y);
-
-                pt_x = p1.x - sign * bevel_normal_x * miter_distance_limit;
-                pt_y = p1.y - sign * bevel_normal_y * miter_distance_limit;
-                d0_x =  offset * bevel_normal_y;
-                d0_y = -offset * bevel_normal_x;
-                d1_x = -offset * bevel_normal_y;
-                d1_y =  offset * bevel_normal_x;
+                IM_POLYLINE_CLIPPED_BEVEL_GEOMETRY(pt_x, pt_y, d0_x, d0_y, d1_x, d1_y, half_thickness, miter_distance_limit);
             }
 
             if (sin_theta < 0.0f)
@@ -829,6 +912,8 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
 
             if (sin_theta < 0.0f)
             {
+                IM_POLYLINE_ARC(p1, half_fringe_thickness, ImAtan2(-n0.y, -n0.x), ImAcos(cos_theta));
+
                 IM_POLYLINE_VERTEX( 4, p1.x - n0.x * half_fringe_thickness, p1.y - n0.y * half_fringe_thickness, uv, context.fringe_color);
                 IM_POLYLINE_VERTEX( 5, p1.x - n0.x *        half_thickness, p1.y - n0.y *        half_thickness, uv, context.color);
                 IM_POLYLINE_VERTEX( 6, p1.x,                                p1.y,                                uv, context.color);
@@ -852,6 +937,8 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
             }
             else
             {
+                IM_POLYLINE_ARC(p1, half_fringe_thickness, ImAtan2(n0.y, n0.x), -ImAcos(cos_theta));
+
                 IM_POLYLINE_VERTEX( 4, p1.x,                                p1.y,                                uv, context.color);
                 IM_POLYLINE_VERTEX( 5, p1.x + n0.x *        half_thickness, p1.y + n0.y *        half_thickness, uv, context.color);
                 IM_POLYLINE_VERTEX( 6, p1.x + n0.x * half_fringe_thickness, p1.y + n0.y * half_fringe_thickness, uv, context.fringe_color);
@@ -978,22 +1065,9 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
             }
             else if (preferred_join == Bevel || preferred_join == MiterClip)
             {
-                float bevel_normal_x = n0.x + n1.x;
-                float bevel_normal_y = n0.y + n1.y;
-                IM_NORMALIZE2F_OVER_ZERO(bevel_normal_x, bevel_normal_y);
-
-                const float sign = sin_theta < 0.0f ? 1.0f : -1.0f;
-
-                float dir_0_x = (n0.x + bevel_normal_x) * 0.5f;
-                float dir_0_y = (n0.y + bevel_normal_y) * 0.5f;
-                float dir_1_x = (n1.x + bevel_normal_x) * 0.5f;
-                float dir_1_y = (n1.y + bevel_normal_y) * 0.5f;
-                IM_FIXNORMAL2F(dir_0_x, dir_0_y);
-                IM_FIXNORMAL2F(dir_1_x, dir_1_y);
-                dir_0_x *= context.fringe_width;
-                dir_0_y *= context.fringe_width;
-                dir_1_x *= context.fringe_width;
-                dir_1_y *= context.fringe_width;
+                float bevel_normal_x, bevel_normal_y;
+                float dir_0_x, dir_0_y, dir_1_x, dir_1_y;
+                IM_POLYLINE_BEVEL_VECTORS(bevel_normal_x, bevel_normal_y, dir_0_x, dir_0_y, dir_1_x, dir_1_y, context.fringe_width);
 
                 if (preferred_join == Bevel)
                 {
@@ -1017,12 +1091,8 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
                     // 5 join triangles, 11 total
                     //
 
-                    const float pt_x = p1.x;
-                    const float pt_y = p1.y;
-                    const float d0_x = n0.x * half_thickness;
-                    const float d0_y = n0.y * half_thickness;
-                    const float d1_x = n1.x * half_thickness;
-                    const float d1_y = n1.y * half_thickness;
+                    float pt_x, pt_y, d0_x, d0_y, d1_x, d1_y;
+                    IM_POLYLINE_BEVEL_GEOMETRY(pt_x, pt_y, d0_x, d0_y, d1_x, d1_y);
 
                     if (sin_theta < 0.0f)
                     {
@@ -1078,14 +1148,8 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
                     // 9 join triangles, 15 total
                     //
 
-                    const float offset = (n0.x * (bevel_normal_x * miter_distance_limit - n0.x * half_thickness) + n0.y * (bevel_normal_y * miter_distance_limit - n0.y * half_thickness)) / (n0.y * bevel_normal_x - n0.x * bevel_normal_y);
-
-                    const float pt_x = p1.x - sign * bevel_normal_x * miter_distance_limit;
-                    const float pt_y = p1.y - sign * bevel_normal_y * miter_distance_limit;
-                    const float d0_x =  offset * bevel_normal_y;
-                    const float d0_y = -offset * bevel_normal_x;
-                    const float d1_x = -offset * bevel_normal_y;
-                    const float d1_y =  offset * bevel_normal_x;
+                    float pt_x, pt_y, d0_x, d0_y, d1_x, d1_y;
+                    IM_POLYLINE_CLIPPED_BEVEL_GEOMETRY(pt_x, pt_y, d0_x, d0_y, d1_x, d1_y, half_thickness, miter_distance_limit);
 
                     if (sin_theta < 0.0f)
                     {
@@ -1129,19 +1193,17 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
                     }
                 }
             }
-#if 0
             else IM_UNLIKELY if (preferred_join == Round)
             {
                 if (sin_theta < 0.0f)
                 {
-                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(-n0.y, -n0.x), ImAcos(cos_theta));
+                    IM_POLYLINE_ARC(p1, half_fringe_thickness, ImAtan2(-n0.y, -n0.x), ImAcos(cos_theta));
                 }
                 else
                 {
-                    IM_POLYLINE_ARC(p1, half_thickness, ImAtan2(n0.y, n0.x), -ImAcos(cos_theta));
+                    IM_POLYLINE_ARC(p1, half_fringe_thickness, ImAtan2(n0.y, n0.x), -ImAcos(cos_theta));
                 }
             }
-#endif
 
             vtx_write += 13;
             idx_start += 13;
@@ -1160,45 +1222,46 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
     }
     else
     {
-#if 0
         IM_UNLIKELY if (context.cap == ImDrawFlags_CapSquare)
         {
             // Form a square cap by moving Butt cap corner vertices
             // along the direction of the segment they belong to.
             //
-            // Gap is filled with extra triangle.
+            // Gap is filled with two extra triangles.
             //
-            //   0 +-----------+ 2
-            //     |'.       .'|
-            //     |  '. 1 .'  |
-            //     |    '+'    |
-            //     | ~ ~ ~ ~ ~ |
-            //                 
+            //   0 +------------------+ 3
+            //     |'.          ...':'|
+            //     |  '. 1...'''2 .'  |
+            //     |    '+------+'    |
+            //     | ~ ~ ~ ~ ~ ~ ~ ~ ~|
+            //
 
             ImVec2 n_begin = context.normals[0];
-            n_begin.x *= half_thickness;
-            n_begin.y *= half_thickness;
+            n_begin.x *= context.fringe_width;
+            n_begin.y *= context.fringe_width;
 
             ImVec2 n_end   = context.normals[context.point_count - 1];
-            n_end.x *= half_thickness;
-            n_end.y *= half_thickness;
+            n_end.x *= context.fringe_width;
+            n_end.y *= context.fringe_width;
 
             ImDrawVert* vtx_start = draw_list->_VtxWritePtr;
 
             vtx_start[0].pos.x -= n_begin.y;
             vtx_start[0].pos.y += n_begin.x;
-            vtx_start[2].pos.x -= n_begin.y;
-            vtx_start[2].pos.y += n_begin.x;
+            vtx_start[3].pos.x -= n_begin.y;
+            vtx_start[3].pos.y += n_begin.x;
 
             vtx_write[0].pos.x += n_end.y;
             vtx_write[0].pos.y -= n_end.x;
-            vtx_write[2].pos.x += n_end.y;
-            vtx_write[2].pos.y -= n_end.x;
+            vtx_write[3].pos.x += n_end.y;
+            vtx_write[3].pos.y -= n_end.x;
 
-            IM_POLYLINE_TRIANGLE_BEGIN(6);
-            IM_POLYLINE_TRIANGLE(0, 0, 1, 2);
-            IM_POLYLINE_TRIANGLE_EX(1, draw_list->_VtxCurrentIdx, 0, 2, 1);
-            IM_POLYLINE_TRIANGLE_END(6);
+            IM_POLYLINE_TRIANGLE_BEGIN(12);
+            IM_POLYLINE_TRIANGLE(0, 0, 1, 3);
+            IM_POLYLINE_TRIANGLE(1, 1, 2, 3);
+            IM_POLYLINE_TRIANGLE_EX(2, draw_list->_VtxCurrentIdx, 0, 3, 1);
+            IM_POLYLINE_TRIANGLE_EX(3, draw_list->_VtxCurrentIdx, 1, 3, 2);
+            IM_POLYLINE_TRIANGLE_END(12);
         }
         else IM_UNLIKELY if (context.cap == ImDrawFlags_CapRound)
         {
@@ -1218,10 +1281,9 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
             float angle0 = ImAtan2(n0.y, n0.x);
             float angle1 = ImAtan2(n1.y, n1.x);
 
-            IM_POLYLINE_ARC(context.points[0],                       half_thickness, angle0, IM_PI);
-            IM_POLYLINE_ARC(context.points[context.point_count - 1], half_thickness, angle1, -IM_PI);
+            IM_POLYLINE_ARC(context.points[0],                       half_fringe_thickness, angle0,  IM_PI);
+            IM_POLYLINE_ARC(context.points[context.point_count - 1], half_fringe_thickness, angle1, -IM_PI);
         }
-#endif
     }
 
     vtx_write += 4;
@@ -1236,10 +1298,8 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
 
     draw_list->PrimUnreserve(idx_count - used_idx_count, vtx_count - used_vtx_count);
 
-#if 0
     IM_UNLIKELY if (arc_count > 0)
-        ImDrawList_Polyline_V3_Thin_AntiAliased_Arcs(draw_list, context, arc_count);
-#endif
+        ImDrawList_Polyline_V3_EmitArcsWithFringe(draw_list, context, arc_count);
 
 
 #if 0
@@ -1449,6 +1509,7 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
 
 static inline void ImDrawList_Polyline_V3_NotAntiAliased(ImDrawList* draw_list, const ImDrawList_Polyline_V3_Context& context)
 {
+    ImDrawList_Polyline_V3_Thick_AntiAliased(draw_list, context);
 }
 
 void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int count, const ImU32 color, const ImDrawFlags draw_flags, const float thickness, const float miter_limit)
