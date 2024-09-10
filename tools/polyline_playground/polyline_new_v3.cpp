@@ -830,7 +830,6 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
         const bool   overlap    = (context.segments_length_sqr[i] < fringe_miter_distance_sqr) || (context.segments_length_sqr[i + 1] < fringe_miter_distance_sqr) || (cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT);
         const bool   continuous = context.closed || i != context.point_count - 1;
 
-        //const JoinType preferred_join = (context.closed || i != context.point_count - 1) ? (miter_distance_sqr > miter_distance_limit_sqr ? default_join_limit : default_join) : Butt;
         JoinType preferred_join = Butt;
         if (continuous)
         {
@@ -2019,8 +2018,21 @@ static inline void ImDrawList_Polyline_V3_NotAntiAliased(ImDrawList* draw_list, 
         ImDrawList_Polyline_V3_EmitArcs(draw_list, context, arc_count, context.color);
 }
 
+#undef IM_POLYLINE_VERTEX
+#undef IM_POLYLINE_TRIANGLE_BEGIN
+#undef IM_POLYLINE_TRIANGLE
+#undef IM_POLYLINE_TRIANGLE_END
+#undef IM_POLYLINE_BEVEL_NORMAL
+#undef IM_POLYLINE_BEVEL_VECTORS
+#undef IM_POLYLINE_BEVEL_GEOMETRY
+#undef IM_POLYLINE_CLIPPED_BEVEL_GEOMETRY
+#undef IM_POLYLINE_ARC
+
 void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int count, const ImU32 color, const ImDrawFlags draw_flags, const float thickness, const float miter_limit)
 {
+#if 1
+    draw_list->AddPolyline(data, count, color, draw_flags, thickness, miter_limit);
+#else
     IM_UNLIKELY if (count < 2 || thickness <= 0.0f || !(color && IM_COL32_A_MASK))
         return;
 
@@ -2181,6 +2193,7 @@ void ImDrawList_Polyline_V3(ImDrawList* draw_list, const ImVec2* data, const int
 
         ImDrawList_Polyline_V3_NotAntiAliased(draw_list, context);
     }
+#endif
 }
 
 

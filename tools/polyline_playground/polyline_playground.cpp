@@ -792,9 +792,9 @@ State::State()
             else if (sscanf_s(line, "Stress=%d", &state->Stress) == 1)
             {
             }
-            else if (sscanf_s(line, "NewPolylineContent=%d", &flag) == 1)
+            else if (sscanf_s(line, "PolylineTemplate=%d", &flag) == 1)
             {
-                state->NewPolyline = static_cast<decltype(state->NewPolyline)>(flag);
+                state->Template = static_cast<decltype(state->Template)>(flag);
             }
             else if (sscanf_s(line, "Name=%63[^\n]", name, static_cast<unsigned int>(sizeof(name))) == 1)
             {
@@ -872,7 +872,7 @@ State::State()
             out_buf->appendf("Join=%d\n", state->LineJoin);
             out_buf->appendf("MiterLimit=%g\n", state->MiterLimit);
             out_buf->appendf("Stress=%d\n", state->Stress);
-            out_buf->appendf("NewPolylineContent=%d\n", std::to_underlying(state->NewPolyline));
+            out_buf->appendf("PolylineTemplate=%d\n", std::to_underlying(state->Template));
             for (const auto& polyline : state->Polylines)
             {
                 out_buf->appendf("Name=%s\n", polyline->Name);
@@ -894,7 +894,7 @@ State::State()
     SettingsHandler.UserData = this;
 }
 
-static void SetupPolyline(Polyline& polyline, NewPolylineContent content)
+static void SetPolyline(Polyline& polyline, PolylineTemplate content)
 {
     const auto loop_count = 200;
     const auto size       = ImVec2(120.0f, 120.0f);
@@ -904,50 +904,50 @@ static void SetupPolyline(Polyline& polyline, NewPolylineContent content)
 
     polyline.Points.clear();
     polyline.Flags     = PolylineFlags_None;
-    polyline.Color     = IM_COL32(255, 255, 255, 48);
+    polyline.Color     = IM_COL32(255, 255, 255, 255);
     polyline.Thickness = 1.0f;
 
     auto draw_list = ImGui::GetForegroundDrawList();
 
     switch (content)
     {
-        case NewPolylineContent::Empty:
+        case PolylineTemplate::Empty:
             break;
 
-        case NewPolylineContent::RectStroke:
+        case PolylineTemplate::RectStroke:
             draw_list->PathRect(ImVec2(0.50f, 0.50f), size - ImVec2(0.50f, 0.50f), 0.0f, ImDrawFlags_None);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             strcpy_s(polyline.Name, "Rect (Stroke)");
             break;
 
-        case NewPolylineContent::RectStrokeThick:
+        case PolylineTemplate::RectStrokeThick:
             draw_list->PathRect(ImVec2(0.50f, 0.50f), size - ImVec2(0.50f, 0.50f), 0.0f, ImDrawFlags_None);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             polyline.Thickness = 4.0f;
             strcpy_s(polyline.Name, "Rect (Stroke Thick)");
             break;
 
-        case NewPolylineContent::RectRoundedStroke:
+        case PolylineTemplate::RectRoundedStroke:
             draw_list->PathRect(ImVec2(0.50f, 0.50f), size - ImVec2(0.50f, 0.50f), rounding, ImDrawFlags_None);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             strcpy_s(polyline.Name, "Rect Rounded (Stroke)");
             break;
 
-        case NewPolylineContent::RectRoundedStrokeThick:
+        case PolylineTemplate::RectRoundedStrokeThick:
             draw_list->PathRect(ImVec2(0.50f, 0.50f), size - ImVec2(0.50f, 0.50f), rounding, ImDrawFlags_None);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             polyline.Thickness = 4.0f;
             strcpy_s(polyline.Name, "Rect Rounded (Stroke Thick)");
             break;
 
-        case NewPolylineContent::CircleStroke:
+        case PolylineTemplate::CircleStroke:
             draw_list->_PathArcToFastEx(center, radius - 0.5f, 0, IM_DRAWLIST_ARCFAST_SAMPLE_MAX, 0);
             draw_list->_Path.Size--;
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             strcpy_s(polyline.Name, "Circle (Stroke)");
             break;
 
-        case NewPolylineContent::CircleStrokeThick:
+        case PolylineTemplate::CircleStrokeThick:
             draw_list->_PathArcToFastEx(center, radius - 0.5f, 0, IM_DRAWLIST_ARCFAST_SAMPLE_MAX, 0);
             draw_list->_Path.Size--;
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
@@ -955,40 +955,40 @@ static void SetupPolyline(Polyline& polyline, NewPolylineContent content)
             strcpy_s(polyline.Name, "Circle (Stroke Thick)");
             break;
 
-        case NewPolylineContent::TriangleStroke:
+        case PolylineTemplate::TriangleStroke:
             draw_list->PathArcTo(center, radius - 0.5f, 0.0f, 4.188790f, 2);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             strcpy_s(polyline.Name, "Triangle (Stroke)");
             break;
 
-        case NewPolylineContent::TriangleStrokeThick:
+        case PolylineTemplate::TriangleStrokeThick:
             draw_list->PathArcTo(center, radius - 0.5f, 0.0f, 4.188790f, 2);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             polyline.Thickness = 4.0f;
             strcpy_s(polyline.Name, "Triangle (Stroke Thick)");
             break;
 
-        case NewPolylineContent::LongStroke:
+        case PolylineTemplate::LongStroke:
             draw_list->PathArcTo(center, radius - 0.5f, 0.0f, IM_PI * 2 * (10 * loop_count - 1) / (10 * loop_count), 10 * loop_count);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             strcpy_s(polyline.Name, "Long (Stroke)");
             break;
 
-        case NewPolylineContent::LongStrokeThick:
+        case PolylineTemplate::LongStrokeThick:
             draw_list->PathArcTo(center, radius - 0.5f, 0.0f, IM_PI * 2 * (10 * loop_count - 1) / (10 * loop_count), 10 * loop_count);
             polyline.Flags |= PolylineFlags_Closed | PolylineFlags_AntiAliased;
             polyline.Thickness = 4.0f;
             strcpy_s(polyline.Name, "Long (Stroke Thick)");
             break;
 
-        case NewPolylineContent::LongJaggedStroke:
+        case PolylineTemplate::LongJaggedStroke:
             for (float n = 0; n < 10 * loop_count; n += 2.51327412287f)
                 draw_list->PathLineTo(center + ImVec2(radius * sinf(n), radius * cosf(n)));
             polyline.Flags |= PolylineFlags_AntiAliased;
             strcpy_s(polyline.Name, "Long Jagged (Stroke)");
             break;
 
-        case NewPolylineContent::LongJaggedStrokeThick:
+        case PolylineTemplate::LongJaggedStrokeThick:
             for (float n = 0; n < 10 * loop_count; n += 2.51327412287f)
                 draw_list->PathLineTo(center + ImVec2(radius * sinf(n), radius * cosf(n)));
             polyline.Flags |= PolylineFlags_AntiAliased;
@@ -996,14 +996,14 @@ static void SetupPolyline(Polyline& polyline, NewPolylineContent content)
             strcpy_s(polyline.Name, "Long Jagged (Stroke Thick)");
             break;
 
-        case NewPolylineContent::LineStroke:
+        case PolylineTemplate::LineStroke:
             draw_list->PathLineTo(ImVec2(0.50f, 0.50f));
             draw_list->PathLineTo(size + ImVec2(0.50f, 0.50f));
             polyline.Flags |= PolylineFlags_AntiAliased;
             strcpy_s(polyline.Name, "Line (Stroke)");
             break;
 
-        case NewPolylineContent::LineStrokeThick:
+        case PolylineTemplate::LineStrokeThick:
             draw_list->PathLineTo(ImVec2(0.50f, 0.50f));
             draw_list->PathLineTo(size + ImVec2(0.50f, 0.50f));
             polyline.Flags |= PolylineFlags_AntiAliased;
@@ -1119,40 +1119,10 @@ static void ToolbarAndTabs()
         state.SetCurrent(static_cast<int>(state.Polylines.size()) - 1);
         select_tab = true;
         ImFormatString(state.Current->Name, IM_ARRAYSIZE(state.Current->Name), "Polyline %d", state.Polylines.size());
-        SetupPolyline(*state.Current, state.NewPolyline);
+        SetPolyline(*state.Current, state.Template);
         ImGui::MarkIniSettingsDirty();
     }
     ImGui::SameLine();
-    {
-        const auto value_changed = ComboBox("##NewPolyline",
-            state.NewPolyline,
-            {
-                { "Empty",                       NewPolylineContent::Empty                  },
-            { "Rect (Stroke)",               NewPolylineContent::RectStroke             },
-            { "Rect (Stroke Thick)",         NewPolylineContent::RectStrokeThick        },
-            { "Rect Rounded (Stroke)",       NewPolylineContent::RectRoundedStroke      },
-            { "Rect Rounded (Stroke Thick)", NewPolylineContent::RectRoundedStrokeThick },
-            { "Circle (Stroke)",             NewPolylineContent::CircleStroke           },
-            { "Circle (Stroke Thick)",       NewPolylineContent::CircleStrokeThick      },
-            { "Triangle (Stroke)",           NewPolylineContent::TriangleStroke         },
-            { "Triangle (Stroke Thick)",     NewPolylineContent::TriangleStrokeThick    },
-            { "Long (Stroke)",               NewPolylineContent::LongStroke             },
-            { "Long (Stroke Thick)",         NewPolylineContent::LongStrokeThick        },
-            { "Long Jagged (Stroke)",        NewPolylineContent::LongJaggedStroke       },
-            { "Long Jagged (Stroke Thick)",  NewPolylineContent::LongJaggedStrokeThick  },
-            { "Line (Stroke)",               NewPolylineContent::LineStroke             },
-            { "Line (Stroke Thick)",         NewPolylineContent::LineStrokeThick        }
-            }
-        );
-
-        if (value_changed)
-            ImGui::MarkIniSettingsDirty();
-    }
-
-    ImGui::SameLine();
-    ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-    ImGui::SameLine();
-
     ImGui::BeginDisabled(state.Current == nullptr);
     if (ImGui::Button("Clone"))
     {
@@ -1728,17 +1698,51 @@ static void EditCanvas()
         //ImGui::Text("View Origin: (%.0f, %.0f)", polyline.View.Origin.x, polyline.View.Origin.y);
         //ImGui::Text("View Scale: %.2f", polyline.View.Scale);
 
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Zoom:");
         ImGui::SameLine();
         ImGui::PushItemWidth(100.0f);
+        bool center = false;
         if (ImGui::DragFloat("##Zoom", &polyline.View.Scale, 0.05f, 0.0f, 100.0f))
         {
             polyline.View.InvScale = 1.0f / polyline.View.Scale;
             auto viewRect = state.Canvas.CalcViewRect(polyline.View);
             polyline.ViewRect = viewRect;
             ImGui::MarkIniSettingsDirty();
+            center = true;
         }
         ImGui::PopItemWidth();
+
+        ImGui::PushItemWidth(100.0f);
+        center |= ImGui::Button("Center");
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        bool fit_to_content = ImGui::Button("Fit to Content");
+        ImGui::SameLine();
+        bool fit_to_grid = ImGui::Button("1:1");
+
+        if (fit_to_content || center || fit_to_grid)
+        {
+            auto bounds = polyline.Bounds();
+            if (bounds.GetWidth() > 0.0f && bounds.GetHeight() > 0.0f)
+            {
+                auto last_view = state.Canvas.View();
+                state.Canvas.SetView(polyline.View);
+                if (fit_to_grid)
+                    state.Canvas.SetView({}, 1.0f);
+                if (fit_to_content)
+                {
+                    const float view_rect_margin = 0.1f;
+                    bounds.Expand(ImVec2(bounds.GetWidth() * view_rect_margin, bounds.GetHeight() * view_rect_margin));
+                    state.Canvas.CenterView(bounds);
+                }
+                else
+                    state.Canvas.CenterView(bounds.GetCenter());
+                polyline.View = state.Canvas.View();
+                polyline.ViewRect = state.Canvas.ViewRect();
+                ImGui::MarkIniSettingsDirty();
+            }
+        }
 
         ImGui::Spacing();
 
@@ -1872,16 +1876,68 @@ static void PolylineWindow()
     if (!state.Current)
         return;
 
-    auto& polygon = *state.Current;
+    auto& polyline = *state.Current;
 
     ImGuiTextBuffer window_label;
-    window_label.appendf("%s###polygon_window", polygon.Name);
+    window_label.appendf("%s###polygon_window", polyline.Name);
 
     if (!ImGui::Begin(window_label.c_str()))
     {
         ImGui::End();
         return;
     }
+
+    auto storage = ImGui::GetStateStorage();
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Template:");
+    ImGui::SameLine();
+    {
+        const auto value_changed = ComboBox("##PolylineContentSelector",
+            state.Template,
+            {
+                { "Empty",                       PolylineTemplate::Empty                  },
+                { "Rect (Stroke)",               PolylineTemplate::RectStroke             },
+                { "Rect (Stroke Thick)",         PolylineTemplate::RectStrokeThick        },
+                { "Rect Rounded (Stroke)",       PolylineTemplate::RectRoundedStroke      },
+                { "Rect Rounded (Stroke Thick)", PolylineTemplate::RectRoundedStrokeThick },
+                { "Circle (Stroke)",             PolylineTemplate::CircleStroke           },
+                { "Circle (Stroke Thick)",       PolylineTemplate::CircleStrokeThick      },
+                { "Triangle (Stroke)",           PolylineTemplate::TriangleStroke         },
+                { "Triangle (Stroke Thick)",     PolylineTemplate::TriangleStrokeThick    },
+                { "Long (Stroke)",               PolylineTemplate::LongStroke             },
+                { "Long (Stroke Thick)",         PolylineTemplate::LongStrokeThick        },
+                { "Long Jagged (Stroke)",        PolylineTemplate::LongJaggedStroke       },
+                { "Long Jagged (Stroke Thick)",  PolylineTemplate::LongJaggedStrokeThick  },
+                { "Line (Stroke)",               PolylineTemplate::LineStroke             },
+                { "Line (Stroke Thick)",         PolylineTemplate::LineStrokeThick        }
+            }
+        );
+
+        if (value_changed)
+            ImGui::MarkIniSettingsDirty();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Set"))
+    {
+        SetPolyline(polyline, state.Template);
+        ImGui::MarkIniSettingsDirty();
+
+        auto centeredViewRect = polyline.Bounds();
+        if (centeredViewRect.GetWidth() > 0.0f && centeredViewRect.GetHeight() > 0.0f)
+        {
+            const float view_rect_margin = 0.1f;
+            centeredViewRect.Expand(ImVec2(centeredViewRect.GetWidth() * view_rect_margin, centeredViewRect.GetHeight() * view_rect_margin));
+            auto last_view = state.Canvas.View();
+            centeredViewRect.Min.x = centeredViewRect.Max.x = centeredViewRect.GetCenter().x;
+            state.Canvas.SetView({}, 0.0f);
+            state.Canvas.CenterView(centeredViewRect);
+            polyline.View = state.Canvas.View();
+            state.Canvas.SetView(last_view);
+        }
+    }
+
+    ImGui::Separator();
 
     ImGui::BeginTable("PolylineProperties", 2, ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_SizingFixedFit, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
     ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 0.0f);
@@ -1890,17 +1946,17 @@ static void PolylineWindow()
     ImGui::Text("Name");
     ImGui::TableNextColumn();
     ImGui::PushItemWidth(-FLT_MIN);
-    if (ImGui::InputText("##Name", polygon.Name, sizeof(polygon.Name)))
+    if (ImGui::InputText("##Name", polyline.Name, sizeof(polyline.Name)))
         ImGui::MarkIniSettingsDirty();
     ImGui::PopItemWidth();
     ImGui::TableNextColumn();
     ImGui::Text("Color");
     ImGui::TableNextColumn();
     ImGui::PushItemWidth(-FLT_MIN);
-    ImColor color = polygon.Color;
+    ImColor color = polyline.Color;
     if (ImGui::ColorEdit4("##Color", &color.Value.x))
     {
-        polygon.Color = color;
+        polyline.Color = color;
         ImGui::MarkIniSettingsDirty();
     }
     ImGui::PopItemWidth();
@@ -1908,26 +1964,25 @@ static void PolylineWindow()
     ImGui::Text("Thickness");
     ImGui::TableNextColumn();
     ImGui::PushItemWidth(-FLT_MIN);
-    if (ImGui::DragFloat("##Thickness", &polygon.Thickness, 0.05f, 0.01f, 200.0f))
+    if (ImGui::DragFloat("##Thickness", &polyline.Thickness, 0.05f, 0.0f, 200.0f))
         ImGui::MarkIniSettingsDirty();
     ImGui::PopItemWidth();
     ImGui::TableNextColumn();
     ImGui::Text("Flags");
     ImGui::TableNextColumn();
-    if (ImGui::CheckboxFlags("Closed", &polygon.Flags, PolylineFlags_Closed))
+    if (ImGui::CheckboxFlags("Closed", &polyline.Flags, PolylineFlags_Closed))
         ImGui::MarkIniSettingsDirty();
     ImGui::SameLine();
-    if (ImGui::CheckboxFlags("Anti-aliased", &polygon.Flags, PolylineFlags_AntiAliased))
+    if (ImGui::CheckboxFlags("Anti-aliased", &polyline.Flags, PolylineFlags_AntiAliased))
         ImGui::MarkIniSettingsDirty();
     ImGui::SameLine();
-    if (ImGui::CheckboxFlags("Square Caps", &polygon.Flags, PolylineFlags_SquareCaps))
+    if (ImGui::CheckboxFlags("Square Caps", &polyline.Flags, PolylineFlags_SquareCaps))
         ImGui::MarkIniSettingsDirty();
     ImGui::EndTable();
 
-    auto storage = ImGui::GetStateStorage();
     auto last_current_point = storage->GetIntRef(ImGui::GetID("LastCurrentPoint"), -1);
-    auto current_point_changed = *last_current_point != polygon.CurrentPoint;
-    *last_current_point = polygon.CurrentPoint;
+    auto current_point_changed = *last_current_point != polyline.CurrentPoint;
+    *last_current_point = polyline.CurrentPoint;
 
     ImGui::BeginTable("PolylinePoints", 2, ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg, ImVec2(ImGui::GetContentRegionAvail().x, 0.0f));
     ImGui::TableSetupColumn("Point", ImGuiTableColumnFlags_WidthFixed, 0.0f);
@@ -1935,19 +1990,19 @@ static void PolylineWindow()
     ImGui::TableHeadersRow();
     int point_index = 0;
     ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(1.0f, 0.5f));
-    for (auto& point : polygon.Points)
+    for (auto& point : polyline.Points)
     {
         ImGui::PushID(point_index++);
         ImGui::TableNextColumn();
         ImGuiTextBuffer label;
         label.appendf("%d", point_index);
-        bool is_selected = polygon.CurrentPoint == point_index - 1;
+        bool is_selected = polyline.CurrentPoint == point_index - 1;
         if (is_selected && current_point_changed)
             ImGui::SetScrollHereY();
         if (ImGui::Selectable(label.c_str(), is_selected, 0, ImVec2(0.0f, ImGui::GetFrameHeight())))
         {
-            polygon.CurrentPoint = is_selected ? -1 : point_index - 1;
-            *last_current_point = polygon.CurrentPoint;
+            polyline.CurrentPoint = is_selected ? -1 : point_index - 1;
+            *last_current_point = polyline.CurrentPoint;
         }
         ImGui::TableNextColumn();
         ImGui::PushItemWidth(-FLT_MIN);

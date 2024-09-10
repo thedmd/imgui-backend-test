@@ -156,6 +156,26 @@ struct Polyline
             }
         }
     }
+
+    ImRect Bounds() const
+    {
+        auto min = ImVec2( FLT_MAX,  FLT_MAX);
+        auto max = ImVec2(-FLT_MAX, -FLT_MAX);
+
+        for (const auto& point : Points)
+        {
+            min = ImMin(min, point);
+            max = ImMax(max, point);
+        }
+        auto size = max - min;
+
+        if (size.x <= 0.0f || size.y <= 0.0f)
+            return {};
+
+        auto bounds = ImRect(min, max);
+        bounds.Expand(Thickness * 0.5f);
+        return bounds;
+    }
 };
 
 template <size_t N>
@@ -190,7 +210,7 @@ struct Average
     }
 };
 
-enum class NewPolylineContent : int
+enum class PolylineTemplate : int
 {
     Empty,
     RectStroke,
@@ -221,7 +241,7 @@ struct State
     bool                            ShowLines = true;
     bool                            ShowMesh = false;
 
-    NewPolylineContent              NewPolyline = NewPolylineContent::Empty;
+    PolylineTemplate                Template = PolylineTemplate::Empty;
 
     Method                          Method = New;
     ImDrawFlags                     LineCap = ImDrawFlags_CapDefault_;
