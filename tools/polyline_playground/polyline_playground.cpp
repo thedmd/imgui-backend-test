@@ -1065,6 +1065,7 @@ static void ToolbarAndTabs()
         const auto value_changed = ComboBox("##Cap",
             state.LineCap,
             {
+                { "None",       ImDrawFlags_CapNone   },
                 { "Butt",       ImDrawFlags_CapButt   },
                 { "Square",     ImDrawFlags_CapSquare },
                 { "Round",      ImDrawFlags_CapRound  }

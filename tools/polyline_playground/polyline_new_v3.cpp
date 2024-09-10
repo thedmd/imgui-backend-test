@@ -297,14 +297,16 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
     ImVec2 p0 = context.points [context.closed ? context.point_count - 1 : 0];
     ImVec2 n0 = context.normals[context.closed ? context.point_count - 1 : 0];
 
+    ImVec2 p1, n1;
+
     IM_POLYLINE_VERTEX(0, p0.x - n0.x * half_thickness, p0.y - n0.y * half_thickness, uv, context.fringe_color);
     IM_POLYLINE_VERTEX(1, p0.x,                         p0.y,                         uv, context.color);
     IM_POLYLINE_VERTEX(2, p0.x + n0.x * half_thickness, p0.y + n0.y * half_thickness, uv, context.fringe_color);
 
-    for (int i = context.closed ? 0 : 1; i < context.point_count; ++i)
+    for (int i = context.closed ? 0 : 1; i < context.point_count; ++i, p0 = p1, n0 = n1)
     {
-        const ImVec2 p1 = context.points[i];
-        const ImVec2 n1 = context.normals[i];
+        p1 = context.points[i];
+        n1 = context.normals[i];
 
         // theta is the angle between two segments
         const float cos_theta = n0.x * n1.x + n0.y * n1.y;
@@ -316,9 +318,10 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
         const float  miter_distance_sqr = miter_offset_x * miter_offset_x + miter_offset_y * miter_offset_y;
 
         const bool   overlap          = (context.segments_length_sqr[i] < miter_distance_sqr) || (context.segments_length_sqr[i + 1] < miter_distance_sqr) || (cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT);
+        const bool   continuous       = context.closed || i != context.point_count - 1;
 
-        const JoinType preferred_join = (context.closed || i != context.point_count - 1) ? (miter_distance_sqr > miter_distance_limit_sqr ? default_join_limit : default_join) : Butt;
-        const JoinType join           = overlap ? ThickButt : preferred_join;
+        const JoinType preferred_join = continuous ? (miter_distance_sqr > miter_distance_limit_sqr ? default_join_limit : default_join) : Butt;
+        const JoinType join           = overlap ? (continuous ? ThickButt : Butt) : preferred_join;
 
         //
         // Miter and Butt joins have same geometry, only difference is in location of the vertices
@@ -518,7 +521,7 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             IM_POLYLINE_TRIANGLE(3, 2, 4, 7);
             IM_POLYLINE_TRIANGLE_END(12);
 
-            IM_UNLIKELY if ((cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT) || (preferred_join == Miter) || (preferred_join == Bevel))
+            IM_UNLIKELY if ((cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT) && ((preferred_join == Miter) || (preferred_join == Bevel)))
             {
                 // Thin square cap
                 // 
@@ -629,9 +632,6 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
             vtx_write += 6;
             idx_start += 6;
         }
-
-        p0 = p1;
-        n0 = n1;
     }
 
     if (context.closed)
@@ -642,7 +642,56 @@ static inline void ImDrawList_Polyline_V3_Thin_AntiAliased(ImDrawList* draw_list
     }
     else
     {
-        if (context.cap == ImDrawFlags_CapButt || context.cap == ImDrawFlags_CapSquare)
+        if (context.cap == ImDrawFlags_CapButt)
+        {
+            // Form a square cap by moving Butt cap corner vertices
+            // along the direction of the segment they belong to.
+            //
+            // Gap is filled with extra triangle.
+            //
+            //   0 +-----------+ 2
+            //     |'.       .'|
+            //     |  '. 1 .'  |
+            //     |    '+'    |
+            //     | ~ ~ ~ ~ ~ |
+            //
+
+            const float half_thickness_sqr = half_thickness * half_thickness;
+
+            const float s_begin = context.segments_length_sqr[1];
+            const float t_begin = (s_begin < half_thickness_sqr ? ImSqrt(s_begin) : half_thickness) * 0.5f;
+            ImVec2 n_begin = context.normals[0];
+            n_begin.x *= t_begin;
+            n_begin.y *= t_begin;
+
+            const float s_end = context.segments_length_sqr[context.point_count];
+            const float t_end = (s_end < half_thickness_sqr ? ImSqrt(s_end) : half_thickness) * 0.5f;
+            ImVec2      n_end = context.normals[context.point_count - 1];
+            n_end.x *= t_end;
+            n_end.y *= t_end;
+
+            ImDrawVert* vtx_start = draw_list->_VtxWritePtr;
+
+            vtx_start[0].pos.x -=  n_begin.y;
+            vtx_start[0].pos.y +=  n_begin.x;
+            vtx_start[1].pos.x -= -n_begin.y;
+            vtx_start[1].pos.y += -n_begin.x;
+            vtx_start[2].pos.x -=  n_begin.y;
+            vtx_start[2].pos.y +=  n_begin.x;
+
+            vtx_write[0].pos.x +=  n_end.y;
+            vtx_write[0].pos.y -=  n_end.x;
+            vtx_write[1].pos.x += -n_end.y;
+            vtx_write[1].pos.y -= -n_end.x;
+            vtx_write[2].pos.x +=  n_end.y;
+            vtx_write[2].pos.y -=  n_end.x;
+
+            IM_POLYLINE_TRIANGLE_BEGIN(6);
+            IM_POLYLINE_TRIANGLE(0, 0, 1, 2);
+            IM_POLYLINE_TRIANGLE_EX(1, draw_list->_VtxCurrentIdx, 0, 2, 1);
+            IM_POLYLINE_TRIANGLE_END(6);
+        }
+        else if (context.cap == ImDrawFlags_CapSquare)
         {
             // Form a square cap by moving Butt cap corner vertices
             // along the direction of the segment they belong to.
@@ -753,15 +802,17 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
     ImVec2 p0 = context.points [context.closed ? context.point_count - 1 : 0];
     ImVec2 n0 = context.normals[context.closed ? context.point_count - 1 : 0];
 
+    ImVec2 p1, n1;
+
     IM_POLYLINE_VERTEX(0, p0.x - n0.x * half_fringe_thickness, p0.y - n0.y * half_fringe_thickness, uv, context.fringe_color);
     IM_POLYLINE_VERTEX(1, p0.x - n0.x *        half_thickness, p0.y - n0.y *        half_thickness, uv, context.color);
     IM_POLYLINE_VERTEX(2, p0.x + n0.x *        half_thickness, p0.y + n0.y *        half_thickness, uv, context.color);
     IM_POLYLINE_VERTEX(3, p0.x + n0.x * half_fringe_thickness, p0.y + n0.y * half_fringe_thickness, uv, context.fringe_color);
 
-    for (int i = context.closed ? 0 : 1; i < context.point_count; ++i)
+    for (int i = context.closed ? 0 : 1; i < context.point_count; ++i, p0 = p1, n0 = n1)
     {
-        const ImVec2 p1 = context.points[i];
-        const ImVec2 n1 = context.normals[i];
+        p1 = context.points[i];
+        n1 = context.normals[i];
 
         // theta is the angle between two segments
         const float cos_theta = n0.x * n1.x + n0.y * n1.y;
@@ -776,11 +827,12 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
         const float  fringe_miter_offset_y = (n0.y + n1.y) * half_fringe_thickness * miter_scale_factor;
         const float  fringe_miter_distance_sqr = fringe_miter_offset_x * fringe_miter_offset_x + fringe_miter_offset_y * fringe_miter_offset_y;
 
-        const bool   overlap = (context.segments_length_sqr[i] < fringe_miter_distance_sqr) || (context.segments_length_sqr[i + 1] < fringe_miter_distance_sqr) || (cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT);
+        const bool   overlap    = (context.segments_length_sqr[i] < fringe_miter_distance_sqr) || (context.segments_length_sqr[i + 1] < fringe_miter_distance_sqr) || (cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT);
+        const bool   continuous = context.closed || i != context.point_count - 1;
 
         //const JoinType preferred_join = (context.closed || i != context.point_count - 1) ? (miter_distance_sqr > miter_distance_limit_sqr ? default_join_limit : default_join) : Butt;
         JoinType preferred_join = Butt;
-        if (context.closed || i != context.point_count - 1)
+        if (continuous)
         {
             preferred_join = (miter_distance_sqr > miter_distance_limit_sqr ? default_join_limit : default_join);
 
@@ -796,7 +848,7 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
                     preferred_join = Miter;
             }
         }
-        const JoinType join = overlap ? ThickButt : preferred_join;
+        const JoinType join = overlap ? (continuous ? ThickButt : Butt) : preferred_join;
 
         //
         // Miter and Butt joins have same geometry, only difference is in location of the vertices
@@ -1327,9 +1379,6 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
             vtx_write += 13;
             idx_start += 13;
         }
-
-        p0 = p1;
-        n0 = n1;
     }
 
     if (context.closed)
@@ -1355,23 +1404,37 @@ static inline void ImDrawList_Polyline_V3_Thick_AntiAliased(ImDrawList* draw_lis
             //     | ~ ~ ~ ~ ~ ~ ~ ~ ~|
             //
 
-            ImVec2 n_begin = context.normals[0];
-            n_begin.x *= context.fringe_width;
-            n_begin.y *= context.fringe_width;
+            const float fringe_width_sqr = context.fringe_width * context.fringe_width;
 
-            ImVec2 n_end   = context.normals[context.point_count - 1];
-            n_end.x *= context.fringe_width;
-            n_end.y *= context.fringe_width;
+            const float s_begin = context.segments_length_sqr[1];
+            const float t_begin = (s_begin < fringe_width_sqr ? ImSqrt(s_begin) : context.fringe_width) * 0.5f;
+            ImVec2 n_begin = context.normals[0];
+            n_begin.x *= t_begin;
+            n_begin.y *= t_begin;
+
+            const float s_end = context.segments_length_sqr[context.point_count];
+            const float t_end = (s_end < fringe_width_sqr ? ImSqrt(s_end) : context.fringe_width) * 0.5f;
+            ImVec2      n_end = context.normals[context.point_count - 1];
+            n_end.x *= t_end;
+            n_end.y *= t_end;
 
             ImDrawVert* vtx_start = draw_list->_VtxWritePtr;
 
             vtx_start[0].pos.x -= n_begin.y;
             vtx_start[0].pos.y += n_begin.x;
+            vtx_start[1].pos.x += n_begin.y;
+            vtx_start[1].pos.y -= n_begin.x;
+            vtx_start[2].pos.x += n_begin.y;
+            vtx_start[2].pos.y -= n_begin.x;
             vtx_start[3].pos.x -= n_begin.y;
             vtx_start[3].pos.y += n_begin.x;
 
             vtx_write[0].pos.x += n_end.y;
             vtx_write[0].pos.y -= n_end.x;
+            vtx_write[1].pos.x -= n_end.y;
+            vtx_write[1].pos.y += n_end.x;
+            vtx_write[2].pos.x -= n_end.y;
+            vtx_write[2].pos.y += n_end.x;
             vtx_write[3].pos.x += n_end.y;
             vtx_write[3].pos.y -= n_end.x;
 
@@ -1494,13 +1557,15 @@ static inline void ImDrawList_Polyline_V3_NotAntiAliased(ImDrawList* draw_list, 
     ImVec2 p0 = context.points [context.closed ? context.point_count - 1 : 0];
     ImVec2 n0 = context.normals[context.closed ? context.point_count - 1 : 0];
 
+    ImVec2 p1, n1;
+
     IM_POLYLINE_VERTEX(0, p0.x - n0.x * half_thickness, p0.y - n0.y * half_thickness, uv, context.color);
     IM_POLYLINE_VERTEX(1, p0.x + n0.x * half_thickness, p0.y + n0.y * half_thickness, uv, context.color);
 
-    for (int i = context.closed ? 0 : 1; i < context.point_count; ++i)
+    for (int i = context.closed ? 0 : 1; i < context.point_count; ++i, p0 = p1, n0 = n1)
     {
-        const ImVec2 p1 = context.points[i];
-        const ImVec2 n1 = context.normals[i];
+        p1 = context.points[i];
+        n1 = context.normals[i];
 
         // theta is the angle between two segments
         const float cos_theta = n0.x * n1.x + n0.y * n1.y;
@@ -1511,10 +1576,11 @@ static inline void ImDrawList_Polyline_V3_NotAntiAliased(ImDrawList* draw_list, 
         const float  miter_offset_y     = (n0.y + n1.y) * half_thickness * miter_scale_factor;
         const float  miter_distance_sqr = miter_offset_x * miter_offset_x + miter_offset_y * miter_offset_y;
 
-        const bool   overlap = (context.segments_length_sqr[i] < miter_distance_sqr) || (context.segments_length_sqr[i + 1] < miter_distance_sqr) || (cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT);
+        const bool   overlap    = (context.segments_length_sqr[i] < miter_distance_sqr) || (context.segments_length_sqr[i + 1] < miter_distance_sqr) || (cos_theta <= IM_POLYLINE_MITER_ANGLE_LIMIT);
+        const bool   continuous = context.closed || i != context.point_count - 1;
 
         JoinType preferred_join = Butt;
-        if (context.closed || i != context.point_count - 1)
+        if (continuous)
         {
             preferred_join = (miter_distance_sqr > miter_distance_limit_sqr ? default_join_limit : default_join);
 
@@ -1528,7 +1594,7 @@ static inline void ImDrawList_Polyline_V3_NotAntiAliased(ImDrawList* draw_list, 
                     preferred_join = Miter;
             }
         }
-        const JoinType join = overlap ? ThickButt : preferred_join;
+        const JoinType join = overlap ? (continuous ? ThickButt : Butt) : preferred_join;
 
         //
         // Miter and Butt joins have same geometry, only difference is in location of the vertices
