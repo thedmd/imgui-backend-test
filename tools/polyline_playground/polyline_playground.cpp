@@ -627,14 +627,19 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
 {
     ImZoneScoped;
 
-    ImDrawFlags flags = ImDrawFlags_None;
+    ImDrawFlags flags = ImDrawFlags_None | state.LineJoin | state.LineCap;
     if (this->Flags & PolylineFlags_Closed)
         flags |= ImDrawFlags_Closed;
 
-    const auto draw_flags = draw_list->Flags;
+    const auto last_draw_list_flags = draw_list->Flags;
 
-    if (!(this->Flags & PolylineFlags_AntiAliased))
+    if (this->Flags & PolylineFlags_AntiAliased)
+        draw_list->Flags |= ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex;
+    else
         draw_list->Flags &= ~(ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex);
+
+    if (method == Method::UpstreamNoTex)
+        draw_list->Flags &= ~ImDrawListFlags_AntiAliasedLinesUseTex;
 
     const auto repeat_count = ImMax(1, stress);
 
@@ -664,7 +669,8 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
         switch (method)
         {
             case Method::Upstream:
-                ImGuiEx::ImDrawList_Polyline_Upstream(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags, Thickness);
+            case Method::UpstreamNoTex:
+                draw_list->AddPolylineLegacy(Points.data(), static_cast<int>(Points.size()), Color, flags, Thickness);
                 break;
 
             case Method::PR2964:
@@ -672,15 +678,15 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
                 break;
 
             case Method::New:
-                ImGuiEx::ImDrawList_Polyline(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags | state.LineJoin | state.LineCap, Thickness, state.MiterLimit);
+                ImGuiEx::ImDrawList_Polyline(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags, Thickness, state.MiterLimit);
                 break;
 
             case Method::NewOptimized:
-                ImGuiEx::ImDrawList_Polyline_Optimized(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags | state.LineJoin | state.LineCap, Thickness, state.MiterLimit);
+                ImGuiEx::ImDrawList_Polyline_Optimized(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags, Thickness, state.MiterLimit);
                 break;
 
             case Method::NewV3:
-                ImGuiEx::ImDrawList_Polyline_V3(draw_list, Points.data(), static_cast<int>(Points.size()), Color, flags | state.LineJoin | state.LineCap, Thickness, state.MiterLimit);
+                draw_list->AddPolyline(Points.data(), static_cast<int>(Points.size()), Color, flags, Thickness, state.MiterLimit);
                 break;
 
             case Method::Polyline2D:
@@ -717,7 +723,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
         vertex.pos.y += origin.y;
     }
 
-    draw_list->Flags = draw_flags;
+    draw_list->Flags = last_draw_list_flags;
 
     return stats;
 }
@@ -896,7 +902,7 @@ State::State()
 
 static void SetPolyline(Polyline& polyline, PolylineTemplate content)
 {
-    const auto loop_count = 200;
+    const auto loop_count = 1000 * 5; // 5 - default stress amount in perf tool
     const auto size       = ImVec2(120.0f, 120.0f);
     const auto center     = ImVec2(60.0f, 60.0f);
     const auto radius     = 48.0f;
@@ -1010,31 +1016,94 @@ static void SetPolyline(Polyline& polyline, PolylineTemplate content)
             polyline.Thickness = 4.0f;
             strcpy_s(polyline.Name, "Line (Stroke Thick)");
             break;
-    }
 
-    auto min = ImVec2(FLT_MAX, FLT_MAX);
-    auto max = ImVec2(-FLT_MAX, -FLT_MAX);
-    for (const auto& point : draw_list->_Path)
-    {
-        min = ImMin(min, point);
-        max = ImMax(max, point);
-    }
-    auto shape_size = max - min;
+        case PolylineTemplate::Issue2183:
+            draw_list->PathLineTo({ 100, 120 });
+            draw_list->PathLineTo({ 140, 800 });
+            draw_list->PathLineTo({ 50, 50 });
+            polyline.Flags |= PolylineFlags_AntiAliased | PolylineFlags_Closed;
+            polyline.Color = IM_COL32(255, 255, 0, 255);
+            polyline.Thickness = 3.0f;
+            strcpy_s(polyline.Name, "#2183");
+            break;
 
-    const float view_rect_margin = 0.1f;
-    polyline.ViewRect = ImRect(min - shape_size * view_rect_margin * 0.5f, max + shape_size * view_rect_margin * 0.5f);
+        case PolylineTemplate::Issue3366:
+            draw_list->PathLineTo({ 0, 100 });
+            draw_list->PathLineTo({ 98, 100 });
+            draw_list->PathLineTo({ 99, 110 });
+            draw_list->PathLineTo({ 100, 50 });
+            draw_list->PathLineTo({ 110, 100 });
+            draw_list->PathLineTo({ 120, 100 });
+            draw_list->PathLineTo({ 200, 100 });
+            polyline.Flags |= PolylineFlags_AntiAliased;
+            polyline.Color = IM_COL32(255, 91, 252, 255);
+            polyline.Thickness = 2.0f;
+            strcpy_s(polyline.Name, "#3366");
+            break;
+
+        case PolylineTemplate::Issue288_A:
+            draw_list->PathArcTo(ImVec2(100.0f, 20), 90.0f, 0.0f, 3.1416f);
+            draw_list->PathArcTo(ImVec2(100.0f, 20), 70.0f, 3.1416f, 0.0f);
+            polyline.Flags |= PolylineFlags_AntiAliased | PolylineFlags_Closed;
+            polyline.Color = IM_COL32(255, 255, 0x00, 128);
+            polyline.Thickness = 12.0f;
+            strcpy_s(polyline.Name, "#288 (A)");
+            break;
+
+        case PolylineTemplate::Issue288_B:
+            draw_list->PathLineTo(ImVec2(0, 0));
+            draw_list->PathLineTo(ImVec2(30, 100));
+            draw_list->PathLineTo(ImVec2(50, 10));
+            draw_list->PathLineTo(ImVec2(100, 90));
+            draw_list->PathLineTo(ImVec2(120, 0));
+            polyline.Flags |= PolylineFlags_AntiAliased;
+            polyline.Color = IM_COL32(255, 255, 0x00, 128);
+            polyline.Thickness = 12.0f;
+            strcpy_s(polyline.Name, "#288 (B)");
+            break;
+
+        case PolylineTemplate::Issue3258_A:
+            draw_list->PathLineTo({ -5,  5 });
+            draw_list->PathLineTo({  0,  0 });
+            draw_list->PathLineTo({  5,  5 });
+            polyline.Flags |= PolylineFlags_AntiAliased | PolylineFlags_Closed;
+            polyline.Color = IM_COL32(255, 0, 0, 255);
+            polyline.Thickness = 1.0f;
+            break;
+
+        case PolylineTemplate::Issue3258_B:
+            draw_list->PathLineTo({  0, 5 });
+            draw_list->PathLineTo({ -5, 0 });
+            draw_list->PathLineTo({  5, 0 });
+            polyline.Flags |= PolylineFlags_AntiAliased | PolylineFlags_Closed;
+            polyline.Color = IM_COL32(255, 0, 0, 255);
+            polyline.Thickness = 1.0f;
+            break;
+    }
 
     polyline.Points.reserve(draw_list->_Path.Size);
     for (const auto& point : draw_list->_Path)
         polyline.Points.push_back(point);
 
     draw_list->_Path.clear();
+
+    auto bounds = polyline.Bounds();
+    if (bounds.GetWidth() > 0 && bounds.GetHeight() > 0)
+    {
+        auto last_view = state.Canvas.View();
+
+        const float view_rect_margin = 0.1f;
+        bounds.Expand(ImVec2(bounds.GetWidth() * view_rect_margin, bounds.GetHeight() * view_rect_margin));
+        state.Canvas.CenterView(bounds);
+        polyline.View = state.Canvas.View();
+        polyline.ViewRect = state.Canvas.ViewRect();
+        state.Canvas.SetView(last_view);
+    }
 }
 
 static void ToolbarAndTabs()
 {
     bool select_tab = ImGui::IsWindowAppearing();
-
 
     {
         ImGui::AlignTextToFramePadding();
@@ -1043,14 +1112,15 @@ static void ToolbarAndTabs()
         const auto value_changed = ComboBox("##Method",
             state.Method,
             {
-                { "Upstream",           Method::Upstream     },
-                { "PR2964",             Method::PR2964       },
-                { "New",                Method::New          },
-                { "New (optimized)",    Method::NewOptimized },
-                { "New V3",             Method::NewV3        },
-                { "Polyline2D",         Method::Polyline2D   },
-                { "Allegro",            Method::Allegro      },
-                { "Clipper2",           Method::Clipper2     }
+                { "Upstream",           Method::Upstream      },
+                { "Upstream (no tex)",  Method::UpstreamNoTex },
+                { "New V3",             Method::NewV3         },
+                { "PR2964",             Method::PR2964        },
+                { "New (optimized)",    Method::NewOptimized  },
+                { "New",                Method::New           },
+                { "Polyline2D",         Method::Polyline2D    },
+                { "Allegro",            Method::Allegro       },
+                { "Clipper2",           Method::Clipper2      },
             }
         );
     }
@@ -1068,7 +1138,7 @@ static void ToolbarAndTabs()
                 { "None",       ImDrawFlags_CapNone   },
                 { "Butt",       ImDrawFlags_CapButt   },
                 { "Square",     ImDrawFlags_CapSquare },
-                { "Round",      ImDrawFlags_CapRound  }
+                { "Round",      ImDrawFlags_CapRound  },
             }
         );
         if (value_changed)
@@ -1362,7 +1432,6 @@ static void EditCanvas()
         state.Canvas.CenterView(currentViewRect);
     }
 
-
     if (state.EnableEdit)
     {
         constexpr auto  closest_point_on_segment_max_distance = 5.0f;
@@ -1489,39 +1558,6 @@ static void EditCanvas()
         state.Canvas.Resume();
     }
 
-    //if ((isDragging || ImGui::IsItemHovered()) && ImGui::IsMouseDragging(1, 0.0f))
-    //{
-    //    if (!isDragging)
-    //    {
-    //        isDragging = true;
-    //        drawStartPoint = viewOrigin;
-    //    }
-
-    //    canvas.SetView(drawStartPoint + ImGui::GetMouseDragDelta(1, 0.0f) * viewScale, viewScale);
-    //}
-    //else if (isDragging)
-    //{
-    //    isDragging = false;
-    //}
-    //else if (!isDragging && ImGui::IsItemHovered() && io.MouseWheel)
-    //{
-    //    auto mousePos     = io.MousePos;
-
-    //    // apply new view scale
-    //    auto oldView      = canvas.View();
-    //    auto newViewScale = viewScale * powf(1.1f, io.MouseWheel);
-    //    canvas.SetView(viewOrigin, newViewScale);
-    //    auto newView      = canvas.View();
-
-    //    // calculate origin offset to keep mouse position fixed
-    //    auto screenPosition = canvas.FromLocal(mousePos, oldView);
-    //    auto canvasPosition = canvas.ToLocal(screenPosition, newView);
-    //    auto originOffset   = (canvasPosition - mousePos) * newViewScale;
-
-    //    // apply new view
-    //    canvas.SetView(viewOrigin + originOffset, newViewScale);
-    //}
-
     auto last_fringe_scale = draw_list->_FringeScale;
 
     draw_list->_FringeScale = 1.0f;// / ImGui::GetIO().DisplayFramebufferScale.x;
@@ -1539,42 +1575,95 @@ static void EditCanvas()
 
         state.Canvas.Suspend();
 
+        state.LineCache.clear();
+
         draw_list->PushClipRect(state.Canvas.Rect().Min, state.Canvas.Rect().Max);
 
         const auto color = IM_COL32(255, 255, 0, 255);
-        const auto thickness = 1.0f / ImGui::GetIO().DisplayFramebufferScale.x;
+        const auto thickness = 1.0f;//1.0f / ImGui::GetIO().DisplayFramebufferScale.x;
 
-        for (unsigned int i = 0; i < draw_cmd_elements; i += 6)
+        for (unsigned int i = 0; i < draw_cmd_elements; i += 3)
         {
             auto idx0 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 0];
             auto idx1 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 1];
             auto idx2 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 2];
-            auto idx3 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 3];
-            auto idx4 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 4];
-            auto idx5 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 5];
+            //auto idx3 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 3];
+            //auto idx4 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 4];
+            //auto idx5 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 5];
 
             auto& vertex0 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx0];
             auto& vertex1 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx1];
             auto& vertex2 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx2];
-            auto& vertex3 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx3];
-            auto& vertex4 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx4];
-            auto& vertex5 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx5];
+            //auto& vertex3 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx3];
+            //auto& vertex4 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx4];
+            //auto& vertex5 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx5];
 
             auto p0 = ImVec2(vertex0.pos.x, vertex0.pos.y);
             auto p1 = ImVec2(vertex1.pos.x, vertex1.pos.y);
             auto p2 = ImVec2(vertex2.pos.x, vertex2.pos.y);
-            auto p3 = ImVec2(vertex3.pos.x, vertex3.pos.y);
-            auto p4 = ImVec2(vertex4.pos.x, vertex4.pos.y);
-            auto p5 = ImVec2(vertex5.pos.x, vertex5.pos.y);
+            //auto p3 = ImVec2(vertex3.pos.x, vertex3.pos.y);
+            //auto p4 = ImVec2(vertex4.pos.x, vertex4.pos.y);
+            //auto p5 = ImVec2(vertex5.pos.x, vertex5.pos.y);
 
-            draw_list->PathLineTo(p0); draw_list->PathLineTo(p1); draw_list->PathStroke(color, false, thickness);
-            draw_list->PathLineTo(p1); draw_list->PathLineTo(p2); draw_list->PathStroke(color, false, thickness);
-            draw_list->PathLineTo(p2); draw_list->PathLineTo(p0); draw_list->PathStroke(color, false, thickness);
-            
-            draw_list->PathLineTo(p3); draw_list->PathLineTo(p4); draw_list->PathStroke(color, false, thickness);
-            draw_list->PathLineTo(p4); draw_list->PathLineTo(p5); draw_list->PathStroke(color, false, thickness);
-            draw_list->PathLineTo(p5); draw_list->PathLineTo(p3); draw_list->PathStroke(color, false, thickness);
+            state.LineCache.push_back({ p0, p1 });
+            state.LineCache.push_back({ p1, p2 });
+            state.LineCache.push_back({ p2, p0 });
+            //state.LineCache.push_back({ p3, p4 });
+            //state.LineCache.push_back({ p4, p5 });
+            //state.LineCache.push_back({ p5, p3 });
         }
+
+        for (auto& line : state.LineCache)
+            if (line.P1.x < line.P0.x)
+                std::swap(line.P0, line.P1);
+
+        static auto is_same_value = [](const float a, const float b) -> bool
+        {
+            constexpr auto epsilon = 0.01f;
+            return ImAbs(a - b) < epsilon;
+        };
+
+        static auto is_same_point = [](const ImVec2& a, const ImVec2& b) -> bool
+        {
+            return is_same_value(a.x, b.x) && is_same_value(a.y, b.y);
+        };
+
+        std::sort(state.LineCache.begin(), state.LineCache.end(), [](const auto& a, const auto& b)
+            {
+                if (!is_same_value(a.P0.x, b.P0.x))
+                    return a.P0.x < b.P0.x;
+                if (!is_same_value(a.P0.y, b.P0.y))
+                    return a.P0.y < b.P0.y;
+                if (!is_same_value(a.P1.x, b.P1.x))
+                    return a.P1.x < b.P1.x;
+                return a.P1.y < b.P1.y;
+            }
+        );
+
+        auto end_it = std::unique(state.LineCache.begin(), state.LineCache.end(), [](const auto& a, const auto& b)
+            {
+                return is_same_point(a.P0, b.P0) && is_same_point(a.P1, b.P1);
+            }
+        );
+
+        if (end_it != state.LineCache.end())
+            state.LineCache.erase(end_it, state.LineCache.end());
+
+        for (auto& line : state.LineCache)
+        {
+            draw_list->PathLineTo(line.P0);
+            draw_list->PathLineTo(line.P1);
+            draw_list->PathStroke(color, false, thickness);
+        }
+
+        //draw_list->PathLineTo(p0); draw_list->PathLineTo(p1); draw_list->PathStroke(color, false, thickness);
+        //draw_list->PathLineTo(p1); draw_list->PathLineTo(p2); draw_list->PathStroke(color, false, thickness);
+        //draw_list->PathLineTo(p2); draw_list->PathLineTo(p0); draw_list->PathStroke(color, false, thickness);
+
+        //draw_list->PathLineTo(p3); draw_list->PathLineTo(p4); draw_list->PathStroke(color, false, thickness);
+        //draw_list->PathLineTo(p4); draw_list->PathLineTo(p5); draw_list->PathStroke(color, false, thickness);
+        //draw_list->PathLineTo(p5); draw_list->PathLineTo(p3); draw_list->PathStroke(color, false, thickness);
+
 
         draw_list->PopClipRect();
 
@@ -1626,30 +1715,6 @@ static void EditCanvas()
     draw_list->PopClipRect();
 
     state.Canvas.Resume();
-
-# if 0
-    auto flags = draw_list->Flags;
-    //draw_list->Flags &= ~(ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex | ImDrawListFlags_AntiAliasedFill);
-
-    float rounding = 20.0f;
-    float half_rounding = rounding * 0.5f;
-    float inner_rounding = half_rounding;
-
-    ImVec2 p0 = ImVec2(50, 50);
-    ImVec2 p1 = ImVec2(400, 200);
-    ImVec2 half_pixel = ImVec2(0.50f, 0.50f);
-    ImVec2 half_rounding_vec = ImVec2(half_rounding, half_rounding);
-
-    draw_list->AddRectFilled(p0, p1, IM_COL32(102, 182, 102, 200), rounding);
-
-    draw_list->AddRect(
-        p0 - half_pixel + half_rounding_vec,
-        p1 + half_pixel - half_rounding_vec,
-        IM_COL32(255, 255, 0, 200),
-        inner_rounding, 0, rounding);
-
-    draw_list->Flags = flags;
-# endif
 
     state.Canvas.End();
 
@@ -1717,7 +1782,7 @@ static void EditCanvas()
         center |= ImGui::Button("Center");
         ImGui::PopItemWidth();
         ImGui::SameLine();
-        bool fit_to_content = ImGui::Button("Fit to Content");
+        bool fit_to_content = ImGui::Button("Fit to Content") || polyline.FitToContent;
         ImGui::SameLine();
         bool fit_to_grid = ImGui::Button("1:1");
 
@@ -1742,6 +1807,8 @@ static void EditCanvas()
                 polyline.ViewRect = state.Canvas.ViewRect();
                 ImGui::MarkIniSettingsDirty();
             }
+
+            polyline.FitToContent = false;
         }
 
         ImGui::Spacing();
@@ -1858,7 +1925,7 @@ static void EditCanvas()
 
 static void PlaygroundWindow()
 {
-    if (!ImGui::Begin("Polyline Playground", nullptr, ImGuiWindowFlags_NoScrollbar))
+    if (!ImGui::Begin("Polyline Playground", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus))
     {
         ImGui::End();
         return;
@@ -1910,7 +1977,13 @@ static void PolylineWindow()
                 { "Long Jagged (Stroke)",        PolylineTemplate::LongJaggedStroke       },
                 { "Long Jagged (Stroke Thick)",  PolylineTemplate::LongJaggedStrokeThick  },
                 { "Line (Stroke)",               PolylineTemplate::LineStroke             },
-                { "Line (Stroke Thick)",         PolylineTemplate::LineStrokeThick        }
+                { "Line (Stroke Thick)",         PolylineTemplate::LineStrokeThick        },
+                { "#2183",                       PolylineTemplate::Issue2183              },
+                { "#3366",                       PolylineTemplate::Issue3366              },
+                { "#288 (A)",                    PolylineTemplate::Issue288_A             },
+                { "#288 (B)",                    PolylineTemplate::Issue288_B             },
+                { "#3258 (A)",                   PolylineTemplate::Issue3258_A            },
+                { "#3258 (B)",                   PolylineTemplate::Issue3258_B            },
             }
         );
 
@@ -1922,19 +1995,7 @@ static void PolylineWindow()
     {
         SetPolyline(polyline, state.Template);
         ImGui::MarkIniSettingsDirty();
-
-        auto centeredViewRect = polyline.Bounds();
-        if (centeredViewRect.GetWidth() > 0.0f && centeredViewRect.GetHeight() > 0.0f)
-        {
-            const float view_rect_margin = 0.1f;
-            centeredViewRect.Expand(ImVec2(centeredViewRect.GetWidth() * view_rect_margin, centeredViewRect.GetHeight() * view_rect_margin));
-            auto last_view = state.Canvas.View();
-            centeredViewRect.Min.x = centeredViewRect.Max.x = centeredViewRect.GetCenter().x;
-            state.Canvas.SetView({}, 0.0f);
-            state.Canvas.CenterView(centeredViewRect);
-            polyline.View = state.Canvas.View();
-            state.Canvas.SetView(last_view);
-        }
+        polyline.FitToContent = true;
     }
 
     ImGui::Separator();
@@ -2032,13 +2093,5 @@ ImGuiSettingsHandler* GetPolylinePlaygroundSettingsHandler()
 
 void PolylinePlayground()
 {
-    auto& style = ImGui::GetStyle();
-
-    auto last_anti_aliased_lines = style.AntiAliasedLines;
-
-    style.AntiAliasedLinesUseTex = false;
-
     ImPolyline::Playground();
-
-    style.AntiAliasedLines = last_anti_aliased_lines;
 }

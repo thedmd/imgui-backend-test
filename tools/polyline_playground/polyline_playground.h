@@ -21,6 +21,7 @@ using std::make_unique;
 enum class Method
 {
     Upstream,
+    UpstreamNoTex,
     PR2964,
     New,
     NewOptimized,
@@ -70,6 +71,8 @@ struct Polyline
     int                 CurrentPoint = -1;
     ImVec2              DragStart;
     ImGuiKey            DragButton = ImGuiKey_None;
+
+    bool                FitToContent = false;
 
     int Index(const ImVec2* point) const noexcept
     {
@@ -227,6 +230,12 @@ enum class PolylineTemplate : int
     LongJaggedStrokeThick,
     LineStroke,
     LineStrokeThick,
+    Issue2183,
+    Issue3366,
+    Issue288_A,
+    Issue288_B,
+    Issue3258_A,
+    Issue3258_B,
 };
 
 struct State
@@ -255,6 +264,9 @@ struct State
     ImGuiEx::Canvas                 Canvas;
 
     ImGuiSettingsHandler            SettingsHandler;
+
+    struct Line { ImVec2 P0, P1; };
+    ImVector<Line>                  LineCache;
 
     State();
 
