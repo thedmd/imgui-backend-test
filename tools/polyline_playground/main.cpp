@@ -20,6 +20,8 @@
 #include "Tracy.hpp"
 #endif
 
+#define ENABLE_DPI_SUPPORT 1
+
 // Data
 static ID3D11Device*            g_pd3dDevice = nullptr;
 static ID3D11DeviceContext*     g_pd3dDeviceContext = nullptr;
@@ -38,6 +40,8 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 // Main code
 int main(int, char**)
 {
+    //SetProcessAffinityMask(GetCurrentProcess(), 1 << 20);
+
     // Create application window
     ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
@@ -69,11 +73,18 @@ int main(int, char**)
     ImGui::StyleColorsDark();
     //ImGui::StyleColorsLight();
 
+    ImGui::GetStyle().FrameBorderSize = 1.0f;
+    ImGui::GetStyle().LegacyPolyline  = true;
+
     // Setup Platform/Renderer backends
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
+#if ENABLE_DPI_SUPPORT
     float dpi = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
+#else
+    float dpi = 1.0f;
+#endif
 
     // Load Fonts
     // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
@@ -94,7 +105,7 @@ int main(int, char**)
     //IM_ASSERT(font != nullptr);
 
     // Our state
-    bool show_demo_window = true;
+    bool show_demo_window = false;
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f * 0.1f, 0.55f * 0.1f, 0.60f * 0.1f, 1.00f);
     ImU32 last_event_id = 0;
@@ -120,6 +131,7 @@ int main(int, char**)
         FrameMark;
 #endif
 
+#if ENABLE_DPI_SUPPORT
         static bool ignore_dpi = false;
         if (ImGui::IsKeyPressed(ImGuiKey_F1))
             ignore_dpi = !ignore_dpi;
@@ -127,6 +139,9 @@ int main(int, char**)
         float dpi = ignore_dpi ? 1.0f : ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
         float snappedDpi = static_cast<float>(static_cast<int>(dpi + 0.5f));
         io.DisplayFramebufferScale.x = io.DisplayFramebufferScale.y = snappedDpi;
+#else
+        io.DisplayFramebufferScale.x = io.DisplayFramebufferScale.y = 1.0f;
+#endif
 
         // Handle window being minimized or screen locked
         if (g_SwapChainOccluded && g_pSwapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED)

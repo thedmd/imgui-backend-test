@@ -795,6 +795,13 @@ State::State()
             else if (sscanf_s(line, "MiterLimit=%g", &state->MiterLimit) == 1)
             {
             }
+            else if (sscanf_s(line, "UseFixedDpi=%d", &flag) == 1)
+            {
+                state->UseFixedDpi = flag ? 1 : 0;
+            }
+            else if (sscanf_s(line, "FixedDpi=%g", &state->FixedDpi) == 1)
+            {
+            }
             else if (sscanf_s(line, "Stress=%d", &state->Stress) == 1)
             {
             }
@@ -877,6 +884,8 @@ State::State()
             out_buf->appendf("Cap=%d\n", state->LineCap);
             out_buf->appendf("Join=%d\n", state->LineJoin);
             out_buf->appendf("MiterLimit=%g\n", state->MiterLimit);
+            out_buf->appendf("UseFixedDpi=%d\n", state->UseFixedDpi ? 1 : 0);
+            out_buf->appendf("FixedDpi=%g\n", state->FixedDpi);
             out_buf->appendf("Stress=%d\n", state->Stress);
             out_buf->appendf("PolylineTemplate=%d\n", std::to_underlying(state->Template));
             for (const auto& polyline : state->Polylines)
@@ -1170,6 +1179,24 @@ static void ToolbarAndTabs()
         if (ImGui::DragFloat("##MiterLimit", &state.MiterLimit, 0.05f, 0.0f, 200.0f))
             ImGui::MarkIniSettingsDirty();
     }
+    ImGui::SameLine();
+    ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Pixel Density:");
+    ImGui::SameLine();
+    if (ImGui::Checkbox("##UseFixedDpi", &state.UseFixedDpi))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::SetNextItemWidth(100.0f);
+    ImGui::BeginDisabled(!state.UseFixedDpi);
+    float currentDpi = (state.UseFixedDpi ? state.FixedDpi : ImGui::GetIO().DisplayFramebufferScale.x) * 100.0f;
+    if (ImGui::DragFloat("##FixedDpi", &currentDpi, 25.0f / 10.0f, 25.0f, 600.0f, "%.0f%%"))
+    {
+        state.FixedDpi = currentDpi / 100.0f;
+        ImGui::MarkIniSettingsDirty();
+    }
+    ImGui::SetItemTooltip("When checked emulate custom pixel density.\n100%% - thickness of 1 is 1 pixel\n200%% - thickness of 1 is 2 pixels");
+    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
     ImGui::SameLine();
@@ -1560,7 +1587,10 @@ static void EditCanvas()
 
     auto last_fringe_scale = draw_list->_FringeScale;
 
-    draw_list->_FringeScale = 1.0f;// / ImGui::GetIO().DisplayFramebufferScale.x;
+    if (state.UseFixedDpi)
+        draw_list->_FringeScale = 1.0f / state.FixedDpi;
+    else
+        draw_list->_FringeScale = 1.0f / ImGui::GetIO().DisplayFramebufferScale.x;
 
     auto stats = polyline.Draw(draw_list, {}, state.Method, state.Stress);
 
@@ -2078,10 +2108,97 @@ static void PolylineWindow()
     ImGui::End();
 }
 
+void ThicknessTestWindow()
+{
+    if (!ImGui::Begin("Thickness Test", 0, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+
+    auto draw_list = ImGui::GetWindowDrawList();
+
+    const auto thickness_id = ImGui::GetID("Thickness");
+    const auto invert_id = ImGui::GetID("Invert");
+    auto thickness = ImGui::GetStateStorage()->GetFloat(thickness_id, 1.0f);
+    auto invert = ImGui::GetStateStorage()->GetBool(invert_id, false);
+
+    if (ImGui::DragFloat("Thickness", &thickness, 0.01f, 0.0f, 5.0f))
+        ImGui::GetStateStorage()->SetFloat(thickness_id, thickness);
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Invert", &invert))
+        ImGui::GetStateStorage()->SetBool(invert_id, invert);
+
+    const auto  origin = ImGui::GetCursorScreenPos();// + ImVec2(0.5f, 0.5f);
+    const float canvas_width  = 640;
+    const float canvas_height = 480;
+
+    const ImU32 backround_color = invert ? IM_COL32_BLACK : IM_COL32_WHITE;
+    const ImU32 line_color = invert ? IM_COL32_WHITE : IM_COL32_BLACK;
+
+    draw_list->AddRectFilled(origin, origin + ImVec2{ canvas_width, canvas_height }, backround_color);
+
+    Polyline polyline;
+    polyline.Points.resize(2);
+    polyline.Color = line_color;
+    polyline.Flags = PolylineFlags_AntiAliased;
+
+    for (int i = 0; i < 20; ++i)
+    {
+        polyline.Points[0].x = 40 + 30 * i;
+        polyline.Points[0].y = 20;
+        polyline.Points[1].x = 20 + 30 * i;
+        polyline.Points[1].y = 170;
+        polyline.Thickness = thickness * 0.3f * (i + 1);
+
+        polyline.Draw(draw_list, origin, state.Method);
+    }
+
+    for (int i = 0; i < 40; ++i)
+    {
+        polyline.Thickness = thickness;
+        polyline.Points[0].x = 320 +  20 * ImSin(i * IM_PI / 20);
+        polyline.Points[0].y = 300 +  20 * ImCos(i * IM_PI / 20);
+        polyline.Points[1].x = 320 + 100 * ImSin(i * IM_PI / 20);
+        polyline.Points[1].y = 300 + 100 * ImCos(i * IM_PI / 20);
+
+        polyline.Draw(draw_list, origin, state.Method);
+    }
+
+    ImGui::Dummy({ canvas_width, canvas_height });
+
+    ImGui::End();
+}
+
 void Playground()
 {
     PlaygroundWindow();
     PolylineWindow();
+    ThicknessTestWindow();
+
+    ImGui::Begin("Rectangle test");
+
+    static bool use_rectangle = true;
+    if(ImGui::RadioButton("AddRect", use_rectangle)) { use_rectangle = true; }
+    if(ImGui::RadioButton("4x AddLine", !use_rectangle)) { use_rectangle = false; }
+
+    ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+    auto* draw_list = ImGui::GetWindowDrawList();
+
+    draw_list->AddRect(cursor_pos, ImVec2(cursor_pos.x + 4.0f, cursor_pos.y + 4.0f), ImColor(255, 0, 0, 255));
+
+    //ImGui::Image(ImGui::GetIO().Fonts->TexID, ImVec2(256, 256));
+
+    //if(use_rectangle) {
+    //    draw_list->AddRect(cursor_pos, ImVec2(cursor_pos.x + 255.f, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
+    //} else {
+    //    draw_list->AddLine(cursor_pos, ImVec2(cursor_pos.x + 255.f, cursor_pos.y), ImColor(255, 0, 0, 255));
+    //    draw_list->AddLine(cursor_pos, ImVec2(cursor_pos.x, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
+    //    draw_list->AddLine(ImVec2(cursor_pos.x + 255.f, cursor_pos.y), ImVec2(cursor_pos.x + 255.f, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
+    //    draw_list->AddLine(ImVec2(cursor_pos.x, cursor_pos.y + 255.f), ImVec2(cursor_pos.x + 255.f, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
+    //}
+
+    ImGui::End();
 }
 
 } // namespace ImPolyline

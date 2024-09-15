@@ -34,7 +34,6 @@ static inline float ImRsqrtSSE2Precise(float x)
 #define IM_FIXNORMAL2F_MAX_INVLEN2          100.0f // 500.0f (see #4053, #3366)
 #define IM_FIXNORMAL2F(VX,VY)               { float d2 = VX*VX + VY*VY; if (d2 > 0.000001f) { float inv_len2 = 1.0f / d2; if (inv_len2 > IM_FIXNORMAL2F_MAX_INVLEN2) inv_len2 = IM_FIXNORMAL2F_MAX_INVLEN2; VX *= inv_len2; VY *= inv_len2; } } (void)0
 
-
 #define IM_POLYLINE_VERTEX(N, X, Y, UV, C)                      \
     {                                                           \
         vtx_write[N].pos.x = X;                                 \
@@ -42,6 +41,8 @@ static inline float ImRsqrtSSE2Precise(float x)
         vtx_write[N].uv    = UV;                                \
         vtx_write[N].col   = C;                                 \
     }
+
+#define IM_POLYLINE_VERTEX_END(N)
 
 #define IM_POLYLINE_TRIANGLE_BEGIN(N)
 

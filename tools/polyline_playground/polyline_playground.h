@@ -255,7 +255,9 @@ struct State
     Method                          Method = New;
     ImDrawFlags                     LineCap = ImDrawFlags_CapDefault_;
     ImDrawFlags                     LineJoin = ImDrawFlags_JoinDefault_;
-    float                           MiterLimit = 2.0f;
+    float                           MiterLimit = 4.0f;
+    bool                            UseFixedDpi = true;
+    float                           FixedDpi = 1.0f;
 
     int                             Stress = 1;
     Average<60>                     DrawDuration;
