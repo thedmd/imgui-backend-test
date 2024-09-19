@@ -281,6 +281,7 @@ enum class PolylineTemplate : int
 enum class RectangleImplementation : int
 {
     Upstream,
+    UpstreamLegacy,
     NewV1
 };
 

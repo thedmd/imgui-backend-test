@@ -79,6 +79,47 @@ const double&& get(const Clipper2Lib::Point<double>&& p) noexcept
 
 #include "mapbox/earcut.hpp"
 
+#include <intrin.h>
+#include <thread>
+struct rdtsc_clock
+{
+    using rep                       = uint64_t;
+    using period                    = std::nano;
+    using duration                  = std::chrono::nanoseconds;
+    using time_point                = std::chrono::time_point<rdtsc_clock>;
+    static constexpr bool is_steady = true;
+
+    static time_point now() noexcept
+    {
+        return time_point(duration(__rdtsc()));
+    }
+
+    static double to_seconds(const duration& d) noexcept
+    {
+        return static_cast<double>(d.count()) * time_scale_ / 1000000000.0;
+    }
+
+private:
+    static double time_scale_;
+
+    static double time_scale() noexcept
+    {
+        std::atomic_signal_fence(std::memory_order_acq_rel);
+        const auto t0 = std::chrono::high_resolution_clock::now();
+        const auto r0 = __rdtsc();
+        std::atomic_signal_fence(std::memory_order_acq_rel);
+        std::this_thread::sleep_for( std::chrono::milliseconds(200));
+        std::atomic_signal_fence(std::memory_order_acq_rel);
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto r1 = __rdtsc();
+        std::atomic_signal_fence( std::memory_order_acq_rel );
+        const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        const auto dr = r1 - r0;
+        return double(dt) / double(dr);
+    }
+};
+double rdtsc_clock::time_scale_ = time_scale();
+
 template <typename T>
 T ImSmoothDamp(T current, T target, T& currentVelocity, float smoothTime, float deltaTime, float maxSpeed = std::numeric_limits<float>::infinity());
 
@@ -845,7 +886,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
 
     const auto first_vertex = draw_list->VtxBuffer.Size;
 
-    const auto start_timestamp = std::chrono::high_resolution_clock::now();
+    const auto start_timestamp = rdtsc_clock::now();
 
     for (int i = 0; i < repeat_count; ++i)
     {
@@ -888,7 +929,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
         }
     }
 
-    const auto end_timestamp = std::chrono::high_resolution_clock::now();
+    const auto end_timestamp = rdtsc_clock::now();
 
     capture.End();
 
@@ -898,7 +939,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
     stats.Elements = capture_info.ElementCount;
     stats.Vertices = capture_info.VtxCount;
     stats.Indices  = capture_info.IdxCount;
-    stats.Duration = std::chrono::duration<double>(end_timestamp - start_timestamp).count();
+    stats.Duration = rdtsc_clock::to_seconds(end_timestamp - start_timestamp);
     stats.DurationAvg = stats.Duration / repeat_count;
     stats.Iterations = repeat_count;
 
@@ -2327,8 +2368,9 @@ void RectPlayground()
     const auto value_changed = ComboBox("##Implementation",
         rstate.Implementation,
         {
-            { "Upstream",           RectangleImplementation::Upstream      },
-            { "New V1",             RectangleImplementation::NewV1         },
+            { "Upstream",           RectangleImplementation::Upstream       },
+            { "Upstream (legacy)",  RectangleImplementation::UpstreamLegacy },
+            { "New V1",             RectangleImplementation::NewV1          },
         }
     );
     if (value_changed)
@@ -2409,8 +2451,6 @@ void RectPlayground()
     auto rmax = cursor_pos + offset + rstate.Size;
     auto rcol = IM_COL32(255, 0, 0, 128);
 
-    const auto start_timestamp = std::chrono::high_resolution_clock::now();
-
     const int repeat_count = rstate.Stress;
 
     ImMeshCapture mesh_capture;
@@ -2422,13 +2462,18 @@ void RectPlayground()
         draw_list->Flags |= ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex;
     else
         draw_list->Flags &= ~(ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex);
+    if (rstate.Implementation == RectangleImplementation::UpstreamLegacy)
+        draw_list->Flags |= ImDrawListFlags_LegacyPolyline;
+    else
+        draw_list->Flags &= ~ImDrawListFlags_LegacyPolyline;
 
+    const auto start_timestamp = rdtsc_clock::now();
     for (int i = 0; i < repeat_count; ++i)
     {
         mesh_capture.Rewind();
-
         draw_list->AddRect(rmin, rmax, rcol, rstate.Rounding, flags, rstate.Thickness);
     }
+    const auto end_timestamp = rdtsc_clock::now();
 
     draw_list->Flags = draw_flags;
 
@@ -2437,9 +2482,7 @@ void RectPlayground()
     if (rstate.ShowMesh)
         mesh_capture.Draw(draw_list, IM_COL32(255, 255, 0, 255), 1.0f);
 
-    const auto end_timestamp = std::chrono::high_resolution_clock::now();
-
-    auto duration    = std::chrono::duration<double>(end_timestamp - start_timestamp).count();
+    auto duration    = rdtsc_clock::to_seconds(end_timestamp - start_timestamp);
     auto durationAvg = duration / repeat_count;
     auto iterations  = repeat_count;
 
