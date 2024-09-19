@@ -12,6 +12,78 @@
 #include <vector>
 #include <memory>
 
+struct ImMeshCaptureInfo
+{
+    unsigned int ElementCount = 0;
+    int          VtxCount     = 0;
+    int          IdxCount     = 0;
+};
+
+struct ImMeshCapture
+{
+    struct Line { ImVec2 P0, P1; };
+
+    void Begin(ImDrawList* draw_list);
+    void End();
+    void Rewind();
+    void Capture();
+    void Draw(ImDrawList* draw_list, ImU32 color, float thickness = 1.0f);
+    auto Info() const -> ImMeshCaptureInfo;
+
+private:
+    struct State
+    {
+        int          CmdCount         = 0;
+        unsigned int ElementCount     = 0;
+        ptrdiff_t    VtxWriteStart    = 0;
+        ptrdiff_t    IdxWriteStart    = 0;
+    };
+
+    auto CaptureState() const -> State;
+
+    ImDrawList*  m_DrawList         = nullptr;
+
+    int          m_VtxBufferSize    = 0;
+    int          m_IdxBufferSize    = 0;
+    unsigned int m_VtxCurrentIdx    = 0;
+    State        m_Begin;
+    State        m_End;
+
+    ImVector<Line> m_LineCache;
+};
+
+template <size_t N = 60, typename T = float>
+struct ImRollingAverageValue
+{
+    T     Values[N] = {};
+    int   Index = 0;
+    int   Count = 0;
+
+    T CachedValue = 0;
+
+    void Add(T value)
+    {
+        Values[Index] = value;
+        Index = (Index + 1) % N;
+        if (Count < N)
+            ++Count;
+
+        if (Index == 0)
+            CachedValue = Get();
+    }
+
+    T Get() const
+    {
+        if (Count == 0)
+            return 0;
+
+        T sum = 0;
+        for (int i = 0; i < Count; ++i)
+            sum += Values[i];
+        return sum / Count;
+    }
+};
+
 namespace ImPolyline {
 
 using std::vector;
@@ -181,38 +253,6 @@ struct Polyline
     }
 };
 
-template <size_t N>
-struct Average
-{
-    double Values[N] = {};
-    size_t Index = 0;
-    size_t Count = 0;
-
-    double CachedValue = 0.0;
-
-    void Add(double value)
-    {
-        Values[Index] = value;
-        Index = (Index + 1) % N;
-        if (Count < N)
-            ++Count;
-
-        if (Index == 0)
-            CachedValue = Get();
-    }
-
-    double Get() const
-    {
-        if (Count == 0)
-            return 0.0;
-
-        double sum = 0.0;
-        for (size_t i = 0; i < Count; ++i)
-            sum += Values[i];
-        return sum / Count;
-    }
-};
-
 enum class PolylineTemplate : int
 {
     Empty,
@@ -238,6 +278,26 @@ enum class PolylineTemplate : int
     Issue3258_B,
 };
 
+enum class RectangleImplementation : int
+{
+    Upstream,
+    NewV1
+};
+
+struct RectangleTestState
+{
+    bool                        AntiAliased    = true;
+    RectangleImplementation     Implementation = RectangleImplementation::NewV1;
+    float                       Thickness      = 1.0f;
+    ImVec2                      Size           = ImVec2(400.0f, 400.0f);
+    float                       Rounding       = 100.0f;
+    ImDrawFlags                 Corners        = ImDrawFlags_RoundCornersAll;
+    int                         Stress         = 1;
+    bool                        ShowMesh       = false;
+    ImMeshCapture               MeshCapture;
+    ImRollingAverageValue<120, double> DrawDuration;
+};
+
 struct State
 {
     using enum Method;
@@ -260,15 +320,15 @@ struct State
     float                           FixedDpi = 1.0f;
 
     int                             Stress = 1;
-    Average<60>                     DrawDuration;
-    Average<60>                     DrawDurationAvg;
+    ImRollingAverageValue<120, double> DrawDuration;
+
+    RectangleTestState              RectangleTest;
 
     ImGuiEx::Canvas                 Canvas;
 
     ImGuiSettingsHandler            SettingsHandler;
 
-    struct Line { ImVec2 P0, P1; };
-    ImVector<Line>                  LineCache;
+    ImMeshCapture                   MeshCapture;
 
     State();
 
@@ -277,7 +337,6 @@ struct State
         Polylines.clear();
         Current = nullptr;
         DrawDuration = {};
-        DrawDurationAvg = {};
     }
 
     void SetCurrent(int index)
@@ -289,10 +348,7 @@ struct State
             Current = nullptr;
 
         if (Current != previous)
-        {
             DrawDuration = {};
-            DrawDurationAvg = {};
-        }
     }
 
     void SetCurrent(const Polyline* polyline)

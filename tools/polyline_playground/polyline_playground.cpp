@@ -200,6 +200,200 @@ private:
     T       m_Velocity   = {};
 };
 
+static auto ImGetBestTimeUnitForDuration(double durationInSeconds) -> std::pair<double, const char*>
+{
+    if (durationInSeconds < 1.0e-6)
+        return { 1.0e-9, "ns" };
+    if (durationInSeconds < 1.0e-3)
+        return { 1.0e-6, "us" };
+    if (durationInSeconds < 1.0)
+        return { 1.0e-3, "ms" };
+    return { durationInSeconds, "s" };
+}
+
+static auto ImFormatDuration(double durationInSeconds, bool withExponents = false) -> std::string
+{
+    auto [unit, unitName] = ImGetBestTimeUnitForDuration(durationInSeconds);
+    ImGuiTextBuffer buffer;
+    buffer.appendf("%.2f%s", durationInSeconds / unit, unitName);
+    if (withExponents)
+        buffer.appendf(" [e%+.0f]", log10(unit));
+    return buffer.c_str();
+}
+
+static bool ImIndentButton(const char* label, const char* tooltip = nullptr, int steps = 1)
+{
+    auto& style = ImGui::GetStyle();
+    auto cursor_pos = ImGui::GetCursorScreenPos();
+    float backup_padding_y = style.FramePadding.y;
+    style.FramePadding.x = 0.0f;
+    style.FramePadding.y = 0.0f;
+    ImGui::SetCursorScreenPos(cursor_pos - ImVec2(style.IndentSpacing * steps, 0.0f));
+    bool pressed = ImGui::ButtonEx(label, ImVec2(style.IndentSpacing * steps - style.ItemSpacing.x, 0), ImGuiButtonFlags_AlignTextBaseLine);
+    if (tooltip)
+        ImGui::SetItemTooltip("%s", tooltip);
+    style.FramePadding.y = backup_padding_y;
+    ImGui::SetCursorScreenPos(cursor_pos);
+    return pressed;
+}
+
+void ImMeshCapture::Begin(ImDrawList* draw_list)
+{
+    m_DrawList = draw_list;
+
+    m_VtxBufferSize = draw_list->VtxBuffer.Size;
+    m_IdxBufferSize = draw_list->IdxBuffer.Size;
+    m_VtxCurrentIdx = draw_list->_VtxCurrentIdx;
+    m_Begin         = CaptureState();
+
+    m_LineCache.shrink(0);
+}
+
+void ImMeshCapture::End()
+{
+    m_End = CaptureState();
+
+    m_LineCache.shrink(0);
+}
+
+void ImMeshCapture::Rewind()
+{
+    m_DrawList->CmdBuffer.shrink(m_Begin.CmdCount);
+    m_DrawList->CmdBuffer.back().ElemCount = m_Begin.ElementCount;
+    m_DrawList->VtxBuffer.shrink(m_VtxBufferSize);
+    m_DrawList->IdxBuffer.shrink(m_IdxBufferSize);
+    m_DrawList->_VtxWritePtr = m_Begin.VtxWriteStart + m_DrawList->VtxBuffer.Data;
+    m_DrawList->_IdxWritePtr = m_Begin.IdxWriteStart + m_DrawList->IdxBuffer.Data;
+    m_DrawList->_VtxCurrentIdx = m_VtxCurrentIdx;
+
+    m_LineCache.shrink(0);
+}
+
+void ImMeshCapture::Capture()
+{
+    if (!m_LineCache.empty())
+        return;
+
+    auto last_present_cmd = ImMin(m_DrawList->CmdBuffer.Size, m_End.CmdCount);
+
+    for (int cmd_index = m_Begin.CmdCount - 1; cmd_index < last_present_cmd; ++cmd_index)
+    {
+        auto& cmd           = m_DrawList->CmdBuffer[cmd_index];
+        auto  first_element = cmd_index == m_Begin.CmdCount - 1 ? m_Begin.ElementCount : 0;
+        auto  element_count = cmd_index < m_End.CmdCount - 1 ? cmd.ElemCount : ImMin(cmd.ElemCount, m_End.ElementCount);
+
+        auto index_offset  = cmd.IdxOffset;
+        auto vertex_offset = cmd.VtxOffset;
+        auto idx_buffer    = m_DrawList->IdxBuffer.Data;
+        auto vtx_buffer    = m_DrawList->VtxBuffer.Data;
+
+        m_LineCache.reserve(m_LineCache.Size + element_count * 3);
+
+        for (unsigned int i = first_element; i < element_count; i += 3)
+        {
+            const auto idx0 = idx_buffer[index_offset + i + 0];
+            const auto idx1 = idx_buffer[index_offset + i + 1];
+            const auto idx2 = idx_buffer[index_offset + i + 2];
+
+            const auto& vertex0 = vtx_buffer[vertex_offset + idx0];
+            const auto& vertex1 = vtx_buffer[vertex_offset + idx1];
+            const auto& vertex2 = vtx_buffer[vertex_offset + idx2];
+
+            const auto p0 = ImVec2(vertex0.pos.x, vertex0.pos.y);
+            const auto p1 = ImVec2(vertex1.pos.x, vertex1.pos.y);
+            const auto p2 = ImVec2(vertex2.pos.x, vertex2.pos.y);
+
+            m_LineCache.push_back({ p0, p1 });
+            m_LineCache.push_back({ p1, p2 });
+            m_LineCache.push_back({ p2, p0 });
+        }
+    }
+
+    // reorder all lines to go from left to right
+    for (auto& line : m_LineCache)
+        if (line.P1.x < line.P0.x)
+            std::swap(line.P0, line.P1);
+
+    // sort all lines
+    static auto is_same_value = [](const float a, const float b) -> bool
+        {
+            constexpr auto epsilon = 0.01f;
+            return ImAbs(a - b) < epsilon;
+        };
+
+    static auto is_same_point = [](const ImVec2& a, const ImVec2& b) -> bool
+        {
+            return is_same_value(a.x, b.x) && is_same_value(a.y, b.y);
+        };
+
+    std::sort(m_LineCache.begin(), m_LineCache.end(), [](const auto& a, const auto& b)
+        {
+            if (!is_same_value(a.P0.x, b.P0.x))
+                return a.P0.x < b.P0.x;
+            if (!is_same_value(a.P0.y, b.P0.y))
+                return a.P0.y < b.P0.y;
+            if (!is_same_value(a.P1.x, b.P1.x))
+                return a.P1.x < b.P1.x;
+            return a.P1.y < b.P1.y;
+        }
+    );
+
+    // remove duplicates
+    auto end_it = std::unique(m_LineCache.begin(), m_LineCache.end(), [](const auto& a, const auto& b)
+        {
+            return is_same_point(a.P0, b.P0) && is_same_point(a.P1, b.P1);
+        }
+    );
+
+    if (end_it != m_LineCache.end())
+        m_LineCache.erase(end_it, m_LineCache.end());
+}
+
+void ImMeshCapture::Draw(ImDrawList* draw_list, ImU32 color, float thickness)
+{
+    Capture();
+
+    for (auto& line : m_LineCache)
+    {
+        draw_list->PathLineTo(line.P0);
+        draw_list->PathLineTo(line.P1);
+        draw_list->PathStroke(color, false, thickness);
+    }
+}
+
+auto ImMeshCapture::Info() const -> ImMeshCaptureInfo
+{
+    ImMeshCaptureInfo result;
+
+    auto last_present_cmd = ImMin(m_DrawList->CmdBuffer.Size, m_End.CmdCount);
+
+    for (int cmd_index = m_Begin.CmdCount - 1; cmd_index < last_present_cmd; ++cmd_index)
+    {
+        auto& cmd           = m_DrawList->CmdBuffer[cmd_index];
+        auto  first_element = cmd_index == m_Begin.CmdCount - 1 ? m_Begin.ElementCount : 0;
+        auto  element_count = cmd_index < m_End.CmdCount - 1 ? cmd.ElemCount : ImMin(cmd.ElemCount, m_End.ElementCount);
+
+        result.ElementCount += element_count - first_element;
+    }
+
+    result.VtxCount = static_cast<int>(m_End.VtxWriteStart - m_Begin.VtxWriteStart);
+    result.IdxCount = static_cast<int>(m_End.IdxWriteStart - m_Begin.IdxWriteStart);
+
+    return result;
+}
+
+auto ImMeshCapture::CaptureState() const -> State
+{
+    State result;
+
+    result.CmdCount      = m_DrawList->CmdBuffer.Size;
+    result.ElementCount  = m_DrawList->CmdBuffer.back().ElemCount;
+    result.VtxWriteStart = m_DrawList->_VtxWritePtr - m_DrawList->VtxBuffer.Data;
+    result.IdxWriteStart = m_DrawList->_IdxWritePtr - m_DrawList->IdxBuffer.Data;
+
+    return result;
+}
+
 template <typename V>
 struct ComboBoxItem
 {
@@ -643,10 +837,9 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
 
     const auto repeat_count = ImMax(1, stress);
 
-    Stats stats;
-    stats.Elements = draw_list->CmdBuffer.back().ElemCount;
-    stats.Vertices = draw_list->VtxBuffer.Size;
-    stats.Indices  = draw_list->IdxBuffer.Size;
+    ImMeshCapture capture;
+
+    capture.Begin(draw_list);
 
     const auto vtx_current_idx = draw_list->_VtxCurrentIdx;
 
@@ -656,15 +849,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
 
     for (int i = 0; i < repeat_count; ++i)
     {
-        if (i > 0)
-        {
-            draw_list->CmdBuffer.back().ElemCount = stats.Elements;
-            draw_list->VtxBuffer.resize(stats.Vertices);
-            draw_list->IdxBuffer.resize(stats.Indices);
-            draw_list->_VtxWritePtr = draw_list->VtxBuffer.Data + stats.Vertices;
-            draw_list->_IdxWritePtr = draw_list->IdxBuffer.Data + stats.Indices;
-            draw_list->_VtxCurrentIdx = vtx_current_idx;
-        }
+        capture.Rewind();
 
         switch (method)
         {
@@ -705,9 +890,14 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
 
     const auto end_timestamp = std::chrono::high_resolution_clock::now();
 
-    stats.Elements = draw_list->CmdBuffer.back().ElemCount - stats.Elements;
-    stats.Vertices = draw_list->VtxBuffer.Size             - stats.Vertices;
-    stats.Indices  = draw_list->IdxBuffer.Size             - stats.Indices;
+    capture.End();
+
+    auto capture_info = capture.Info();
+
+    Stats stats;
+    stats.Elements = capture_info.ElementCount;
+    stats.Vertices = capture_info.VtxCount;
+    stats.Indices  = capture_info.IdxCount;
     stats.Duration = std::chrono::duration<double>(end_timestamp - start_timestamp).count();
     stats.DurationAvg = stats.Duration / repeat_count;
     stats.Iterations = repeat_count;
@@ -802,6 +992,33 @@ State::State()
             else if (sscanf_s(line, "FixedDpi=%g", &state->FixedDpi) == 1)
             {
             }
+            else if (sscanf_s(line, "RectangleTest.AntiAliased=%d", &flag) == 1)
+            {
+                state->RectangleTest.AntiAliased = flag ? 1 : 0;
+            }
+            else if (sscanf_s(line, "RectangleTest.Implementation=%d", &flag) == 1)
+            {
+                state->RectangleTest.Implementation = static_cast<decltype(state->RectangleTest.Implementation)>(flag);
+            }
+            else if (sscanf_s(line, "RectangleTest.Thickness=%g", &state->RectangleTest.Thickness) == 1)
+            {
+            }
+            else if (sscanf_s(line, "RectangleTest.Size=%g,%g", &state->RectangleTest.Size.x, &state->RectangleTest.Size.y) == 2)
+            {
+            }
+            else if (sscanf_s(line, "RectangleTest.Rounding=%g", &state->RectangleTest.Rounding) == 1)
+            {
+            }
+            else if (sscanf_s(line, "RectangleTest.Corners=%d", &state->RectangleTest.Corners) == 1)
+            {
+            }
+            else if (sscanf_s(line, "RectangleTest.Stress=%d", &state->RectangleTest.Stress) == 1)
+            {
+            }
+            else if (sscanf_s(line, "RectangleTest.ShowMesh=%d", &flag) == 1)
+            {
+                state->RectangleTest.ShowMesh = flag ? 1 : 0;
+            }
             else if (sscanf_s(line, "Stress=%d", &state->Stress) == 1)
             {
             }
@@ -886,6 +1103,14 @@ State::State()
             out_buf->appendf("MiterLimit=%g\n", state->MiterLimit);
             out_buf->appendf("UseFixedDpi=%d\n", state->UseFixedDpi ? 1 : 0);
             out_buf->appendf("FixedDpi=%g\n", state->FixedDpi);
+            out_buf->appendf("RectangleTest.AntiAliased=%d\n", state->RectangleTest.AntiAliased ? 1 : 0);
+            out_buf->appendf("RectangleTest.Implementation=%d\n", std::to_underlying(state->RectangleTest.Implementation));
+            out_buf->appendf("RectangleTest.Thickness=%g\n", state->RectangleTest.Thickness);
+            out_buf->appendf("RectangleTest.Size=%g,%g\n", state->RectangleTest.Size.x, state->RectangleTest.Size.y);
+            out_buf->appendf("RectangleTest.Rounding=%g\n", state->RectangleTest.Rounding);
+            out_buf->appendf("RectangleTest.Corners=%d\n", state->RectangleTest.Corners);
+            out_buf->appendf("RectangleTest.Stress=%d\n", state->RectangleTest.Stress);
+            out_buf->appendf("RectangleTest.ShowMesh=%d\n", state->RectangleTest.ShowMesh ? 1 : 0);
             out_buf->appendf("Stress=%d\n", state->Stress);
             out_buf->appendf("PolylineTemplate=%d\n", std::to_underlying(state->Template));
             for (const auto& polyline : state->Polylines)
@@ -1585,6 +1810,8 @@ static void EditCanvas()
         state.Canvas.Resume();
     }
 
+    state.MeshCapture.Begin(draw_list);
+
     auto last_fringe_scale = draw_list->_FringeScale;
 
     if (state.UseFixedDpi)
@@ -1596,108 +1823,14 @@ static void EditCanvas()
 
     draw_list->_FringeScale = last_fringe_scale;
 
+    state.MeshCapture.End();
+
     if (state.ShowMesh)
     {
-        auto draw_cmd               = &draw_list->CmdBuffer.back();
-        auto draw_cmd_elements      = draw_cmd->ElemCount;
-        auto draw_cmd_index_offset  = draw_cmd->IdxOffset;
-        auto draw_cmd_vertex_offset = draw_cmd->VtxOffset;
-
-        state.Canvas.Suspend();
-
-        state.LineCache.clear();
-
-        draw_list->PushClipRect(state.Canvas.Rect().Min, state.Canvas.Rect().Max);
-
-        const auto color = IM_COL32(255, 255, 0, 255);
-        const auto thickness = 1.0f;//1.0f / ImGui::GetIO().DisplayFramebufferScale.x;
-
-        for (unsigned int i = 0; i < draw_cmd_elements; i += 3)
-        {
-            auto idx0 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 0];
-            auto idx1 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 1];
-            auto idx2 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 2];
-            //auto idx3 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 3];
-            //auto idx4 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 4];
-            //auto idx5 = draw_list->IdxBuffer[draw_cmd_index_offset + i + 5];
-
-            auto& vertex0 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx0];
-            auto& vertex1 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx1];
-            auto& vertex2 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx2];
-            //auto& vertex3 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx3];
-            //auto& vertex4 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx4];
-            //auto& vertex5 = draw_list->VtxBuffer[draw_cmd_vertex_offset + idx5];
-
-            auto p0 = ImVec2(vertex0.pos.x, vertex0.pos.y);
-            auto p1 = ImVec2(vertex1.pos.x, vertex1.pos.y);
-            auto p2 = ImVec2(vertex2.pos.x, vertex2.pos.y);
-            //auto p3 = ImVec2(vertex3.pos.x, vertex3.pos.y);
-            //auto p4 = ImVec2(vertex4.pos.x, vertex4.pos.y);
-            //auto p5 = ImVec2(vertex5.pos.x, vertex5.pos.y);
-
-            state.LineCache.push_back({ p0, p1 });
-            state.LineCache.push_back({ p1, p2 });
-            state.LineCache.push_back({ p2, p0 });
-            //state.LineCache.push_back({ p3, p4 });
-            //state.LineCache.push_back({ p4, p5 });
-            //state.LineCache.push_back({ p5, p3 });
-        }
-
-        for (auto& line : state.LineCache)
-            if (line.P1.x < line.P0.x)
-                std::swap(line.P0, line.P1);
-
-        static auto is_same_value = [](const float a, const float b) -> bool
-        {
-            constexpr auto epsilon = 0.01f;
-            return ImAbs(a - b) < epsilon;
-        };
-
-        static auto is_same_point = [](const ImVec2& a, const ImVec2& b) -> bool
-        {
-            return is_same_value(a.x, b.x) && is_same_value(a.y, b.y);
-        };
-
-        std::sort(state.LineCache.begin(), state.LineCache.end(), [](const auto& a, const auto& b)
-            {
-                if (!is_same_value(a.P0.x, b.P0.x))
-                    return a.P0.x < b.P0.x;
-                if (!is_same_value(a.P0.y, b.P0.y))
-                    return a.P0.y < b.P0.y;
-                if (!is_same_value(a.P1.x, b.P1.x))
-                    return a.P1.x < b.P1.x;
-                return a.P1.y < b.P1.y;
-            }
-        );
-
-        auto end_it = std::unique(state.LineCache.begin(), state.LineCache.end(), [](const auto& a, const auto& b)
-            {
-                return is_same_point(a.P0, b.P0) && is_same_point(a.P1, b.P1);
-            }
-        );
-
-        if (end_it != state.LineCache.end())
-            state.LineCache.erase(end_it, state.LineCache.end());
-
-        for (auto& line : state.LineCache)
-        {
-            draw_list->PathLineTo(line.P0);
-            draw_list->PathLineTo(line.P1);
-            draw_list->PathStroke(color, false, thickness);
-        }
-
-        //draw_list->PathLineTo(p0); draw_list->PathLineTo(p1); draw_list->PathStroke(color, false, thickness);
-        //draw_list->PathLineTo(p1); draw_list->PathLineTo(p2); draw_list->PathStroke(color, false, thickness);
-        //draw_list->PathLineTo(p2); draw_list->PathLineTo(p0); draw_list->PathStroke(color, false, thickness);
-
-        //draw_list->PathLineTo(p3); draw_list->PathLineTo(p4); draw_list->PathStroke(color, false, thickness);
-        //draw_list->PathLineTo(p4); draw_list->PathLineTo(p5); draw_list->PathStroke(color, false, thickness);
-        //draw_list->PathLineTo(p5); draw_list->PathLineTo(p3); draw_list->PathStroke(color, false, thickness);
-
-
-        draw_list->PopClipRect();
-
-        state.Canvas.Resume();
+        auto fringe_scale = draw_list->_FringeScale;
+        draw_list->_FringeScale = 1.0f / state.Canvas.View().Scale;
+        state.MeshCapture.Draw(draw_list, IM_COL32(255, 255, 0, 255), draw_list->_FringeScale);
+        draw_list->_FringeScale = fringe_scale;
     }
 
     state.Canvas.Suspend();
@@ -1846,19 +1979,7 @@ static void EditCanvas()
         ImGui::Text("Performance:");
         ImGui::Indent();
 
-        auto find_best_time_unit = [](double durationInSeconds) -> std::pair<double, const char*>
-        {
-            if (durationInSeconds < 1.0e-6)
-                return { 1.0e-9, "ns (e-9)" };
-            if (durationInSeconds < 1.0e-3)
-                return { 1.0e-6, "us (e-6)" };
-            if (durationInSeconds < 1.0)
-                return { 1.0e-3, "ms (e-3)" };
-            return { durationInSeconds, "s" };
-        };
-
         state.DrawDuration.Add(stats.Duration);
-        state.DrawDurationAvg.Add(stats.DurationAvg);
 
         //auto value_getter = [](void* data, int idx) -> float
         //{
@@ -1866,13 +1987,27 @@ static void EditCanvas()
         //    return values.Count ? values.Values[(idx + values.Index) % values.Count] : 0.0;
         //};
 
-        //auto [duration_unit_base, duration_unit_name] = find_best_time_unit(state.DrawDuration.CachedValue);
-        //ImGui::Text("Duration: %.2f%s", state.DrawDuration.CachedValue / duration_unit_base, duration_unit_name);
-        //ImGui::PlotLines("##Duration", value_getter, &state.Duration, state.Duration.Count, 0.0f, nullptr, 0.0f, 100.0f / duration_scale, ImVec2(200, 40.0f));
-        auto [draw_duration_avg_unit_base, draw_duration_avg_unit_name] = find_best_time_unit(state.DrawDurationAvg.CachedValue);
-        ImGui::Text("Duration (average): %.2f%s", state.DrawDurationAvg.CachedValue / draw_duration_avg_unit_base, draw_duration_avg_unit_name);
-        ImGui::Text("Iterations: %d", stats.Iterations);
+        auto indentButton = [](const char* label)
+        {
+            auto& style = ImGui::GetStyle();
+            ImGui::Unindent();
+            float backup_padding_y = style.FramePadding.y;
+            style.FramePadding.y = 0.0f;
+            bool pressed = ImGui::ButtonEx(label, ImVec2(style.IndentSpacing - style.ItemSpacing.x, 0), ImGuiButtonFlags_AlignTextBaseLine);
+            style.FramePadding.y = backup_padding_y;
+            return pressed;
+        };
+
+        ImGui::Text("Duration:");
+        ImGui::Indent();
+        if (ImIndentButton("C##CopyDuration", "Copy to Clipboard", 2))
+            ImGui::SetClipboardText(ImFormatDuration(state.DrawDuration.CachedValue).c_str());
+        ImGui::Text("Average: %s", ImFormatDuration(state.DrawDuration.CachedValue, true).c_str());
+        if (ImIndentButton("C##CopyRollingDuration", "Copy to Clipboard", 2))
+            ImGui::SetClipboardText(ImFormatDuration(state.DrawDuration.Get()).c_str());
+        ImGui::Text("Rolling Avg: %s", ImFormatDuration(state.DrawDuration.Get(), true).c_str());
         ImGui::Unindent();
+        ImGui::Text("Iterations: %d", stats.Iterations);
 
         ImGui::Spacing();
 
@@ -1987,7 +2122,7 @@ static void PolylineWindow()
     auto storage = ImGui::GetStateStorage();
 
     ImGui::AlignTextToFramePadding();
-    ImGui::Text("Template:");
+    ImGui::Text("Template");
     ImGui::SameLine();
     {
         const auto value_changed = ComboBox("##PolylineContentSelector",
@@ -2034,6 +2169,7 @@ static void PolylineWindow()
     ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 0.0f);
     ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Name");
     ImGui::TableNextColumn();
     ImGui::PushItemWidth(-FLT_MIN);
@@ -2041,6 +2177,7 @@ static void PolylineWindow()
         ImGui::MarkIniSettingsDirty();
     ImGui::PopItemWidth();
     ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Color");
     ImGui::TableNextColumn();
     ImGui::PushItemWidth(-FLT_MIN);
@@ -2052,6 +2189,7 @@ static void PolylineWindow()
     }
     ImGui::PopItemWidth();
     ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Thickness");
     ImGui::TableNextColumn();
     ImGui::PushItemWidth(-FLT_MIN);
@@ -2059,6 +2197,7 @@ static void PolylineWindow()
         ImGui::MarkIniSettingsDirty();
     ImGui::PopItemWidth();
     ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Flags");
     ImGui::TableNextColumn();
     if (ImGui::CheckboxFlags("Closed", &polyline.Flags, PolylineFlags_Closed))
@@ -2145,10 +2284,10 @@ void ThicknessTestWindow()
 
     for (int i = 0; i < 20; ++i)
     {
-        polyline.Points[0].x = 40 + 30 * i;
-        polyline.Points[0].y = 20;
-        polyline.Points[1].x = 20 + 30 * i;
-        polyline.Points[1].y = 170;
+        polyline.Points[0].x = 40.0f + 30.0f * i;
+        polyline.Points[0].y = 20.0f;
+        polyline.Points[1].x = 20.0f + 30.0f * i;
+        polyline.Points[1].y = 170.0f;
         polyline.Thickness = thickness * 0.3f * (i + 1);
 
         polyline.Draw(draw_list, origin, state.Method);
@@ -2170,35 +2309,174 @@ void ThicknessTestWindow()
     ImGui::End();
 }
 
+void RectPlayground()
+{
+    const float max_thickness = 200.0f;
+
+    auto& rstate = state.RectangleTest;
+
+    ImGui::Begin("Rectangle test");
+
+    ImGui::BeginTable("##RectangleState1", 2, ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_SizingFixedFit);
+    ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 0.0f);
+    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Implementation");
+    ImGui::TableNextColumn();
+    const auto value_changed = ComboBox("##Implementation",
+        rstate.Implementation,
+        {
+            { "Upstream",           RectangleImplementation::Upstream      },
+            { "New V1",             RectangleImplementation::NewV1         },
+        }
+    );
+    if (value_changed)
+        ImGui::MarkIniSettingsDirty();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Size");
+    ImGui::TableNextColumn();
+    ImGui::PushItemWidth(-FLT_MIN);
+    if (ImGui::DragFloat2("##Size", &rstate.Size.x, 0.5f, 0.0f, 400.0f))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::PopItemWidth();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Thickness");
+    ImGui::TableNextColumn();
+    ImGui::PushItemWidth(-FLT_MIN);
+    if (ImGui::DragFloat("##Thickness", &rstate.Thickness, 0.5f, 0.0f, max_thickness))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::PopItemWidth();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Rounding");
+    ImGui::TableNextColumn();
+    ImGui::PushItemWidth(-FLT_MIN);
+    if (ImGui::DragFloat("##Rounding", &rstate.Rounding, 0.5f, 0.0f, 400.0f))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::PopItemWidth();
+    ImGui::TableNextColumn();
+    ImGui::Text("Rounded Corners");
+    ImGui::TableNextColumn();
+    ImGui::BeginGroup();
+    if (ImGui::CheckboxFlags("##Top-Left", &rstate.Corners, ImDrawFlags_RoundCornersTopLeft))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::CheckboxFlags("##Top-Right", &rstate.Corners, ImDrawFlags_RoundCornersTopRight))
+        ImGui::MarkIniSettingsDirty();
+    if (ImGui::CheckboxFlags("##Bottom-Left", &rstate.Corners, ImDrawFlags_RoundCornersBottomLeft))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::CheckboxFlags("##Bottom-Right", &rstate.Corners, ImDrawFlags_RoundCornersBottomRight))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::EndGroup();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Anti-Aliasing");
+    ImGui::TableNextColumn();
+    if (ImGui::Checkbox("##Anti-Aliasing", &rstate.AntiAliased))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Show Mesh");
+    ImGui::TableNextColumn();
+    if (ImGui::Checkbox("##ShowMesh", &rstate.ShowMesh))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Stress");
+    ImGui::TableNextColumn();
+    ImGui::SetNextItemWidth(100.0f);
+    if (ImGui::DragInt("##Stress", &rstate.Stress, 1, 1, 1000))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::EndTable();
+    if (rstate.Corners == 0)
+        rstate.Corners = ImDrawFlags_RoundCornersNone;
+    ImGui::Separator();
+
+    ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+    auto offset = ImFloor(ImVec2((ImGui::GetContentRegionAvail().x - rstate.Size.x) * 0.5f, max_thickness * 0.5f));
+    auto* draw_list = ImGui::GetWindowDrawList();
+    ImGui::Dummy(offset + rstate.Size + ImVec2(0.0f, max_thickness * 0.5f));
+
+    ImDrawFlags flags = rstate.Corners;
+    if (ImGui::GetIO().KeyShift || rstate.Implementation == RectangleImplementation::NewV1)
+        flags |= 0x80000000u;
+
+    auto rmin = cursor_pos + offset;
+    auto rmax = cursor_pos + offset + rstate.Size;
+    auto rcol = IM_COL32(255, 0, 0, 128);
+
+    const auto start_timestamp = std::chrono::high_resolution_clock::now();
+
+    const int repeat_count = rstate.Stress;
+
+    ImMeshCapture mesh_capture;
+
+    mesh_capture.Begin(draw_list);
+
+    auto draw_flags = draw_list->Flags;
+    if (rstate.AntiAliased)
+        draw_list->Flags |= ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex;
+    else
+        draw_list->Flags &= ~(ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex);
+
+    for (int i = 0; i < repeat_count; ++i)
+    {
+        mesh_capture.Rewind();
+
+        draw_list->AddRect(rmin, rmax, rcol, rstate.Rounding, flags, rstate.Thickness);
+    }
+
+    draw_list->Flags = draw_flags;
+
+    mesh_capture.End();
+
+    if (rstate.ShowMesh)
+        mesh_capture.Draw(draw_list, IM_COL32(255, 255, 0, 255), 1.0f);
+
+    const auto end_timestamp = std::chrono::high_resolution_clock::now();
+
+    auto duration    = std::chrono::duration<double>(end_timestamp - start_timestamp).count();
+    auto durationAvg = duration / repeat_count;
+    auto iterations  = repeat_count;
+
+    ImGui::SetCursorScreenPos(cursor_pos);
+    ImGui::Text("Performance:");
+    ImGui::Indent();
+    rstate.DrawDuration.Add(duration);
+
+    ImGui::Text("Duration:");
+    ImGui::Indent();
+    if (ImIndentButton("C##CopyDuration", "Copy to Clipboard", 2))
+        ImGui::SetClipboardText(ImFormatDuration(rstate.DrawDuration.CachedValue).c_str());
+    ImGui::Text("Average: %s", ImFormatDuration(rstate.DrawDuration.CachedValue, true).c_str());
+    if (ImIndentButton("C##CopyRollingDuration", "Copy to Clipboard", 2))
+        ImGui::SetClipboardText(ImFormatDuration(rstate.DrawDuration.Get()).c_str());
+    ImGui::Text("Rolling Avg: %s", ImFormatDuration(rstate.DrawDuration.Get(), true).c_str());
+    ImGui::Unindent();
+    ImGui::Text("Iterations: %d", iterations);
+    ImGui::Unindent();
+
+    auto info = mesh_capture.Info();
+    ImGui::Text("Geometry:");
+    ImGui::Indent();
+    ImGui::Text("Elements: %u", info.ElementCount);
+    ImGui::Text("Vertices: %d", info.VtxCount);
+    ImGui::Text("Indices: %d", info.IdxCount);
+    ImGui::Unindent();
+
+    ImGui::End();
+}
+
 void Playground()
 {
     PlaygroundWindow();
     PolylineWindow();
     ThicknessTestWindow();
-
-    ImGui::Begin("Rectangle test");
-
-    static bool use_rectangle = true;
-    if(ImGui::RadioButton("AddRect", use_rectangle)) { use_rectangle = true; }
-    if(ImGui::RadioButton("4x AddLine", !use_rectangle)) { use_rectangle = false; }
-
-    ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
-    auto* draw_list = ImGui::GetWindowDrawList();
-
-    draw_list->AddRect(cursor_pos, ImVec2(cursor_pos.x + 4.0f, cursor_pos.y + 4.0f), ImColor(255, 0, 0, 255));
-
-    //ImGui::Image(ImGui::GetIO().Fonts->TexID, ImVec2(256, 256));
-
-    //if(use_rectangle) {
-    //    draw_list->AddRect(cursor_pos, ImVec2(cursor_pos.x + 255.f, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
-    //} else {
-    //    draw_list->AddLine(cursor_pos, ImVec2(cursor_pos.x + 255.f, cursor_pos.y), ImColor(255, 0, 0, 255));
-    //    draw_list->AddLine(cursor_pos, ImVec2(cursor_pos.x, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
-    //    draw_list->AddLine(ImVec2(cursor_pos.x + 255.f, cursor_pos.y), ImVec2(cursor_pos.x + 255.f, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
-    //    draw_list->AddLine(ImVec2(cursor_pos.x, cursor_pos.y + 255.f), ImVec2(cursor_pos.x + 255.f, cursor_pos.y + 255.f), ImColor(255, 0, 0, 255));
-    //}
-
-    ImGui::End();
+    RectPlayground();
 }
 
 } // namespace ImPolyline

@@ -90,6 +90,7 @@ target_compile_definitions(imgui PUBLIC
     #IMGUI_ENABLE_FREETYPE
     IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     #IMGUI_DISABLE_OBSOLETE_KEYIO
+    #IMGUI_DEBUG_PARANOID
 )
 target_include_directories(imgui PUBLIC
     ${IMGUI_DIR}
