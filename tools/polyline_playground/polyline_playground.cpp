@@ -225,14 +225,14 @@ static bool ImIndentButton(const char* label, const char* tooltip = nullptr, int
 {
     auto& style = ImGui::GetStyle();
     auto cursor_pos = ImGui::GetCursorScreenPos();
-    float backup_padding_y = style.FramePadding.y;
+    auto backup_padding = style.FramePadding;
     style.FramePadding.x = 0.0f;
     style.FramePadding.y = 0.0f;
     ImGui::SetCursorScreenPos(cursor_pos - ImVec2(style.IndentSpacing * steps, 0.0f));
     bool pressed = ImGui::ButtonEx(label, ImVec2(style.IndentSpacing * steps - style.ItemSpacing.x, 0), ImGuiButtonFlags_AlignTextBaseLine);
     if (tooltip)
         ImGui::SetItemTooltip("%s", tooltip);
-    style.FramePadding.y = backup_padding_y;
+    style.FramePadding = backup_padding;
     ImGui::SetCursorScreenPos(cursor_pos);
     return pressed;
 }
