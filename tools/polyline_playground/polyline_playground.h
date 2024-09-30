@@ -282,12 +282,14 @@ enum class RectangleImplementation : int
 {
     Upstream,
     UpstreamLegacy,
-    NewV1
+    NewV1,
+    NewV2
 };
 
 struct RectangleTestState
 {
     bool                        AntiAliased    = true;
+    bool                        AntiAliasedTex = true;
     RectangleImplementation     Implementation = RectangleImplementation::NewV1;
     float                       Thickness      = 1.0f;
     ImVec2                      Size           = ImVec2(400.0f, 400.0f);

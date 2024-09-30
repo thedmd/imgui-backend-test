@@ -81,12 +81,12 @@ const double&& get(const Clipper2Lib::Point<double>&& p) noexcept
 
 #include <intrin.h>
 #include <thread>
-struct rdtsc_clock
+struct tsc_clock
 {
     using rep                       = uint64_t;
     using period                    = std::nano;
     using duration                  = std::chrono::nanoseconds;
-    using time_point                = std::chrono::time_point<rdtsc_clock>;
+    using time_point                = std::chrono::time_point<tsc_clock>;
     static constexpr bool is_steady = true;
 
     static time_point now() noexcept
@@ -118,7 +118,7 @@ private:
         return double(dt) / double(dr);
     }
 };
-double rdtsc_clock::time_scale_ = time_scale();
+double tsc_clock::time_scale_ = time_scale();
 
 template <typename T>
 T ImSmoothDamp(T current, T target, T& currentVelocity, float smoothTime, float deltaTime, float maxSpeed = std::numeric_limits<float>::infinity());
@@ -886,7 +886,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
 
     const auto first_vertex = draw_list->VtxBuffer.Size;
 
-    const auto start_timestamp = rdtsc_clock::now();
+    const auto start_timestamp = tsc_clock::now();
 
     for (int i = 0; i < repeat_count; ++i)
     {
@@ -929,7 +929,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
         }
     }
 
-    const auto end_timestamp = rdtsc_clock::now();
+    const auto end_timestamp = tsc_clock::now();
 
     capture.End();
 
@@ -939,7 +939,7 @@ auto Polyline::Draw(ImDrawList* draw_list, const ImVec2& origin, Method method, 
     stats.Elements = capture_info.ElementCount;
     stats.Vertices = capture_info.VtxCount;
     stats.Indices  = capture_info.IdxCount;
-    stats.Duration = rdtsc_clock::to_seconds(end_timestamp - start_timestamp);
+    stats.Duration = tsc_clock::to_seconds(end_timestamp - start_timestamp);
     stats.DurationAvg = stats.Duration / repeat_count;
     stats.Iterations = repeat_count;
 
@@ -1036,6 +1036,10 @@ State::State()
             else if (sscanf_s(line, "RectangleTest.AntiAliased=%d", &flag) == 1)
             {
                 state->RectangleTest.AntiAliased = flag ? 1 : 0;
+            }
+            else if (sscanf_s(line, "RectangleTest.AntiAliasedTex=%d", &flag) == 1)
+            {
+                state->RectangleTest.AntiAliasedTex = flag ? 1 : 0;
             }
             else if (sscanf_s(line, "RectangleTest.Implementation=%d", &flag) == 1)
             {
@@ -1145,6 +1149,7 @@ State::State()
             out_buf->appendf("UseFixedDpi=%d\n", state->UseFixedDpi ? 1 : 0);
             out_buf->appendf("FixedDpi=%g\n", state->FixedDpi);
             out_buf->appendf("RectangleTest.AntiAliased=%d\n", state->RectangleTest.AntiAliased ? 1 : 0);
+            out_buf->appendf("RectangleTest.AntiAliasedTex=%d\n", state->RectangleTest.AntiAliasedTex ? 1 : 0);
             out_buf->appendf("RectangleTest.Implementation=%d\n", std::to_underlying(state->RectangleTest.Implementation));
             out_buf->appendf("RectangleTest.Thickness=%g\n", state->RectangleTest.Thickness);
             out_buf->appendf("RectangleTest.Size=%g,%g\n", state->RectangleTest.Size.x, state->RectangleTest.Size.y);
@@ -2356,11 +2361,15 @@ void RectPlayground()
 
     auto& rstate = state.RectangleTest;
 
-    ImGui::Begin("Rectangle test");
+    if (!ImGui::Begin("Rectangle test", 0, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
 
-    ImGui::BeginTable("##RectangleState1", 2, ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_SizingFixedFit);
+    ImGui::BeginTable("##RectangleState1", 2, ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX);
     ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, 0.0f);
-    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 0.0f);
     ImGui::TableNextColumn();
     ImGui::AlignTextToFramePadding();
     ImGui::Text("Implementation");
@@ -2371,6 +2380,7 @@ void RectPlayground()
             { "Upstream",           RectangleImplementation::Upstream       },
             { "Upstream (legacy)",  RectangleImplementation::UpstreamLegacy },
             { "New V1",             RectangleImplementation::NewV1          },
+            { "New V2",             RectangleImplementation::NewV2          },
         }
     );
     if (value_changed)
@@ -2422,6 +2432,12 @@ void RectPlayground()
         ImGui::MarkIniSettingsDirty();
     ImGui::TableNextColumn();
     ImGui::AlignTextToFramePadding();
+    ImGui::Text("Anti-Aliasing (allow texture)");
+    ImGui::TableNextColumn();
+    if (ImGui::Checkbox("##Anti-Aliasing-Tex", &rstate.AntiAliasedTex))
+        ImGui::MarkIniSettingsDirty();
+    ImGui::TableNextColumn();
+    ImGui::AlignTextToFramePadding();
     ImGui::Text("Show Mesh");
     ImGui::TableNextColumn();
     if (ImGui::Checkbox("##ShowMesh", &rstate.ShowMesh))
@@ -2434,18 +2450,24 @@ void RectPlayground()
     if (ImGui::DragInt("##Stress", &rstate.Stress, 1, 1, 1000))
         ImGui::MarkIniSettingsDirty();
     ImGui::EndTable();
+    rstate.Corners &= ImDrawFlags_RoundCornersAll;
     if (rstate.Corners == 0)
         rstate.Corners = ImDrawFlags_RoundCornersNone;
-    ImGui::Separator();
+    ImGui::SameLine();
+    //ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    //ImGui::SameLine();
 
-    ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
-    auto offset = ImFloor(ImVec2((ImGui::GetContentRegionAvail().x - rstate.Size.x) * 0.5f, max_thickness * 0.5f));
+    //ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+    auto offset = ImFloor(ImVec2(/*(ImGui::GetContentRegionAvail().x - rstate.Size.x) * 0.5f*/max_thickness, max_thickness));
     auto* draw_list = ImGui::GetWindowDrawList();
-    ImGui::Dummy(offset + rstate.Size + ImVec2(0.0f, max_thickness * 0.5f));
+    ImGui::Dummy(offset + rstate.Size + ImVec2(max_thickness, max_thickness));
+    auto cursor_pos = ImGui::GetItemRectMin();
 
     ImDrawFlags flags = rstate.Corners;
-    if (ImGui::GetIO().KeyShift || rstate.Implementation == RectangleImplementation::NewV1)
+    if (rstate.Implementation == RectangleImplementation::NewV1)
         flags |= 0x80000000u;
+    if (rstate.Implementation == RectangleImplementation::NewV2)
+        flags |= 0x40000000u;
 
     auto rmin = cursor_pos + offset;
     auto rmax = cursor_pos + offset + rstate.Size;
@@ -2462,18 +2484,20 @@ void RectPlayground()
         draw_list->Flags |= ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex;
     else
         draw_list->Flags &= ~(ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex);
+    if (!rstate.AntiAliasedTex)
+        draw_list->Flags &= ~ImDrawListFlags_AntiAliasedLinesUseTex;
     if (rstate.Implementation == RectangleImplementation::UpstreamLegacy)
         draw_list->Flags |= ImDrawListFlags_LegacyPolyline;
     else
         draw_list->Flags &= ~ImDrawListFlags_LegacyPolyline;
 
-    const auto start_timestamp = rdtsc_clock::now();
+    const auto start_timestamp = tsc_clock::now();
     for (int i = 0; i < repeat_count; ++i)
     {
         mesh_capture.Rewind();
         draw_list->AddRect(rmin, rmax, rcol, rstate.Rounding, flags, rstate.Thickness);
     }
-    const auto end_timestamp = rdtsc_clock::now();
+    const auto end_timestamp = tsc_clock::now();
 
     draw_list->Flags = draw_flags;
 
@@ -2482,11 +2506,14 @@ void RectPlayground()
     if (rstate.ShowMesh)
         mesh_capture.Draw(draw_list, IM_COL32(255, 255, 0, 255), 1.0f);
 
-    auto duration    = rdtsc_clock::to_seconds(end_timestamp - start_timestamp);
+    auto duration    = tsc_clock::to_seconds(end_timestamp - start_timestamp);
     auto durationAvg = duration / repeat_count;
     auto iterations  = repeat_count;
 
+    ImGui::SetWindowFontScale(0.75f);
+
     ImGui::SetCursorScreenPos(cursor_pos);
+    ImGui::BeginGroup();
     ImGui::Text("Performance:");
     ImGui::Indent();
     rstate.DrawDuration.Add(duration);
@@ -2510,6 +2537,10 @@ void RectPlayground()
     ImGui::Text("Vertices: %d", info.VtxCount);
     ImGui::Text("Indices: %d", info.IdxCount);
     ImGui::Unindent();
+
+    ImGui::EndGroup();
+
+    ImGui::SetWindowFontScale(1.0f);
 
     ImGui::End();
 }
