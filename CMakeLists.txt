@@ -21,6 +21,8 @@ if (MSVC)
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE          "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF")
 endif()
 
+set(USE_MINIAUDIO no)
+set(USE_NODE_EDITOR no)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -28,8 +30,12 @@ find_package(glfw)
 
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/../imgui-dev/imgui)
 set(IMGUI_EXT_DIR ${CMAKE_SOURCE_DIR}/imgui-ext)
-set(IMGUI_NODE_EDITOR_DIR ${CMAKE_SOURCE_DIR}/../imgui-node-editor)
-set(MINIAUDIO ${CMAKE_SOURCE_DIR}/../miniaudio)
+if (USE_NODE_EDITOR)
+    set(IMGUI_NODE_EDITOR_DIR ${CMAKE_SOURCE_DIR}/../imgui-node-editor)
+endif()
+if (USE_MINIAUDIO)
+    set(MINIAUDIO ${CMAKE_SOURCE_DIR}/../miniaudio)
+endif()
 set(GL3W_DIR ${CMAKE_SOURCE_DIR}/third-party/gl3w)
 set(GLUT_DIR ${CMAKE_SOURCE_DIR}/third-party/freeglut-3.0.0)
 set(SDL2_DIR ${CMAKE_SOURCE_DIR}/third-party/SDL2-2.0.14)
@@ -103,28 +109,30 @@ add_custom_command(TARGET imgui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ARGS ${FREETYPE_DIR}/win64/freetype.dll $<TARGET_FILE_DIR:imgui>/
 )
 
-add_library(imgui_node_editor STATIC
-    ${IMGUI_NODE_EDITOR_DIR}/crude_json.cpp
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_canvas.cpp
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor.cpp
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor_api.cpp
-    ${IMGUI_NODE_EDITOR_DIR}/crude_json.h
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_bezier_math.h
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_canvas.h
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_extra_math.h
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor.h
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor_internal.h
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_bezier_math.inl
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_extra_math.inl
-    ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor_internal.inl
-)
-target_compile_definitions(imgui_node_editor INTERFACE IMGUI_HAS_NODE_EDITOR)
-target_include_directories(imgui_node_editor PUBLIC
-    ${IMGUI_NODE_EDITOR_DIR}
-)
-target_link_libraries(imgui_node_editor PRIVATE imgui)
-flatten_filters(imgui_node_editor)
-set_property(TARGET imgui_node_editor PROPERTY FOLDER "lib")
+if (USE_NODE_EDITOR)
+    add_library(imgui_node_editor STATIC
+        ${IMGUI_NODE_EDITOR_DIR}/crude_json.cpp
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_canvas.cpp
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor.cpp
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor_api.cpp
+        ${IMGUI_NODE_EDITOR_DIR}/crude_json.h
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_bezier_math.h
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_canvas.h
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_extra_math.h
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor.h
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor_internal.h
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_bezier_math.inl
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_extra_math.inl
+        ${IMGUI_NODE_EDITOR_DIR}/imgui_node_editor_internal.inl
+    )
+    target_compile_definitions(imgui_node_editor INTERFACE IMGUI_HAS_NODE_EDITOR)
+    target_include_directories(imgui_node_editor PUBLIC
+        ${IMGUI_NODE_EDITOR_DIR}
+    )
+    target_link_libraries(imgui_node_editor PRIVATE imgui)
+    flatten_filters(imgui_node_editor)
+    set_property(TARGET imgui_node_editor PROPERTY FOLDER "lib")
+endif()
 
 add_library(gl3w STATIC
     ${GL3W_DIR}/include/GL/gl3w.h
@@ -136,29 +144,30 @@ target_link_libraries(gl3w PRIVATE opengl32)
 flatten_filters(gl3w)
 set_property(TARGET gl3w PROPERTY FOLDER "lib")
 
-
-add_library(miniaudio STATIC
-    ${MINIAUDIO}/miniaudio.h
-    #${MINIAUDIO}/research/miniaudio_engine.h
-    ${CMAKE_CURRENT_BINARY_DIR}/miniaudio/miniaudio.c
-)
-file(GENERATE
-    OUTPUT
+if (USE_MINIAUDIO)
+    add_library(miniaudio STATIC
+        ${MINIAUDIO}/miniaudio.h
+        #${MINIAUDIO}/research/miniaudio_engine.h
         ${CMAKE_CURRENT_BINARY_DIR}/miniaudio/miniaudio.c
-    CONTENT [=[
-#define MA_DEBUG_OUTPUT
-#define MINIAUDIO_IMPLEMENTATION
-#include "miniaudio.h"
-//#include "miniaudio_engine.h"
-]=]
-)
-target_include_directories(miniaudio
-    PUBLIC
-        ${MINIAUDIO}
-        ${MINIAUDIO}/research
-)
-flatten_filters(miniaudio)
-set_property(TARGET miniaudio PROPERTY FOLDER "lib")
+    )
+    file(GENERATE
+        OUTPUT
+            ${CMAKE_CURRENT_BINARY_DIR}/miniaudio/miniaudio.c
+        CONTENT [=[
+    #define MA_DEBUG_OUTPUT
+    #define MINIAUDIO_IMPLEMENTATION
+    #include "miniaudio.h"
+    //#include "miniaudio_engine.h"
+    ]=]
+    )
+    target_include_directories(miniaudio
+        PUBLIC
+            ${MINIAUDIO}
+            ${MINIAUDIO}/research
+    )
+    flatten_filters(miniaudio)
+    set_property(TARGET miniaudio PROPERTY FOLDER "lib")
+endif()
 
 
 
@@ -376,7 +385,13 @@ add_executable(example_win32_directx9
 if (HAVE_IMGUI_PCH)
     target_precompile_headers(example_win32_directx9 REUSE_FROM imgui)
 endif()
-target_link_libraries(example_win32_directx9 PRIVATE imgui d3d9 imgui_node_editor miniaudio)
+target_link_libraries(example_win32_directx9 PRIVATE imgui d3d9)
+if (USE_NODE_EDITOR)
+    target_link_libraries(example_win32_directx9 PRIVATE imgui_node_editor)
+endif()
+if (USE_MINIAUDIO)
+    target_link_libraries(example_win32_directx9 PRIVATE miniaudio)
+endif()
 flatten_filters(example_win32_directx9)
 set_target_properties(example_win32_directx9 PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY ${EXAMPLES_WORKING_DIR}
